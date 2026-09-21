@@ -88,19 +88,21 @@ def fetch_score(token, csrf, proxy=None, username=None):
     return data.get("data", {}).get("fetchScore") if "errors" not in data else None
 
 def create_order(token, csrf, service_type, target, amount, avatar="", extra=None, proxy=None, username=None):
-    """إنشاء طلب شراء خدمة (الصيغة المؤكدة)"""
-    variables = {
+    """إنشاء طلب شراء خدمة (الصيغة الصحيحة: orderInput كـ object)"""
+    if not avatar:
+        avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
+    order_input = {
         "type": service_type,
         "amount": int(amount),
-        "avatar": avatar or "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
+        "avatar": avatar
     }
     if service_type == "followers":
-        variables["tiktokerUsername"] = target
+        order_input["tiktokerUsername"] = target
     else:
-        variables["videoLink"] = target
+        order_input["videoLink"] = target
     q = {
         "operationName": "CreateOrder",
-        "variables": variables,
+        "variables": {"orderInput": order_input},
         "query": "mutation CreateOrder($orderInput: OrderInput!) { createOrder(orderInput: $orderInput) { _id type amount status score createdAt } }"
     }
     _, data = graphql(q, None, True, token, csrf, proxy, username=username)
