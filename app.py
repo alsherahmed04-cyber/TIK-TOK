@@ -11,6 +11,7 @@ CORS(app, resources={r"/*": {"origins": "*"}},
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Ahmed")
 ACC_FILE = "accounts.json"
 HIST_FILE = "history.json"
+TX_FILE = "transactions.json"
 lock = threading.Lock()
 
 def load_data():
@@ -26,6 +27,24 @@ def save_data(d):
     with lock:
         with open(ACC_FILE, 'w', encoding='utf-8') as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
+
+def load_tx():
+    with lock:
+        if not os.path.exists(TX_FILE): return []
+        try:
+            with open(TX_FILE, encoding='utf-8') as f: return json.load(f)
+        except: return []
+
+def save_tx(t):
+    with lock:
+        with open(TX_FILE, 'w', encoding='utf-8') as f:
+            json.dump(t, f, ensure_ascii=False, indent=2)
+
+def append_tx(entry):
+    t = load_tx()
+    t.append(entry)
+    if len(t) > 2000: t = t[-2000:]
+    save_tx(t)
 
 def load_history():
     with lock:
