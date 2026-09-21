@@ -93,20 +93,14 @@ def create_order(token, csrf, service_type, target, amount, extra=None, proxy=No
         "type": service_type,
         "amount": int(amount),
     }
-    # followers: tiktokerUsername
-    if service_type in ("followers",):
+    if service_type in ("followers", "comments"):
         variables["tiktokerUsername"] = target
-    # likes/views/comments/shares: videoLink
-    elif service_type in ("likes", "views", "comments", "shares", "saves"):
+    else:
         variables["videoLink"] = target
-    # comments: text
-    if service_type == "comments" and extra:
-        variables["text"] = extra
-
     q = {
         "operationName": "CreateOrder",
         "variables": variables,
-        "query": "mutation CreateOrder($type: Action!, $amount: Int!, $tiktokerUsername: String, $videoLink: String, $avatar: String, $initialCount: Int, $text: String) { createOrder(orderInput: { type: $type amount: $amount tiktokerUsername: $tiktokerUsername videoLink: $videoLink avatar: $avatar initialCount: $initialCount text: $text } ) { _id type videoLink tiktokerUsername amount score status createdAt } }"
+        "query": "mutation CreateOrder($type: Action!, $amount: Int!, $tiktokerUsername: String, $videoLink: String, $avatar: String, $initialCount: Int) { createOrder(orderInput: { type: $type amount: $amount tiktokerUsername: $tiktokerUsername videoLink: $videoLink avatar: $avatar initialCount: $initialCount } ) { _id type videoLink tiktokerUsername amount status createdAt } }"
     }
     _, data = graphql(q, "CreateOrder", True, token, csrf, proxy, username=username)
     if "errors" not in data:
