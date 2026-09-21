@@ -78,21 +78,30 @@ def farmer(username, token, csrf, stop_event, logger, score_callback=None):
     logger(f"[~] {username}: بدء التجميع")
     s = fetch_score(token, csrf)
     if s is not None and score_callback: score_callback(s)
-    idle = 0
+    err_count = 0
+    last_status = time.time()
+    stop_event.wait(random.uniform(0.5, 3.0))
     while not stop_event.is_set():
         try:
             q = {"operationName": "GetOrders", "variables": {}, "query": "query GetOrders { getOrders { _id status } }"}
             _, data = graphql(q, "GetOrders", True, token, csrf)
-            orders = data.get("data", {}).get("getOrders", [])
-            pending = [o["_id"] for o in orders if o.get("status") == "pending"]
-            if not pending:
-                idle += 1
-                if idle % 3 == 0:
-                    s = fetch_score(token, csrf)
-                    if s is not None and score_callback: score_callback(s)
-                stop_event.wait(10)
+            if "errors" in data:
+                err_count += 1
+                err = data.get("errors", [{}])[0].get("message", "?")
+                if err_count <= 3 or err_count % 30 == 0:
+                    logger(f"[{username}] GetOrders: {err}")
+                stop_event.wait(random.uniform(4, 8))
                 continue
-            idle = 0
+            err_count = 0
+            orders = data.get("data", {}).get("getOrders", []) or []
+            pending = [o["_id"] for o in orders if o.get("status") == "pending"]
+            now = time.time()
+            if now - last_status > 45:
+                logger(f"[{username}] {len(orders)} أوامر, {len(pending)} معلقة")
+                last_status = now
+            if not pending:
+                stop_event.wait(random.uniform(2, 5))
+                continue
             for task in pending:
                 if stop_event.is_set(): break
                 rnd = random.randint(3000, 4500)
@@ -108,7 +117,10 @@ def farmer(username, token, csrf, stop_event, logger, score_callback=None):
                     if s is not None:
                         logger(f"[{username}] ✓ الرصيد: {s}")
                         if score_callback: score_callback(s)
-                stop_event.wait(random.uniform(1.5, 3.0))
+                else:
+                    err = result.get("errors", [{}])[0].get("message", "?")
+                    logger(f"[{username}] ActionOrder: {err}")
+                stop_event.wait(random.uniform(1.0, 2.5))
         except Exception as e:
             logger(f"[{username}] خطأ: {e}")
             stop_event.wait(5)
