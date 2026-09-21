@@ -318,14 +318,31 @@ def api_buy():
     amount = int(d.get("amount", 0) or 0)
     if not acc_name or not service or not target or amount <= 0:
         return jsonify({"ok": False, "msg": "أدخل كل البيانات"})
+    # الحدود الدنيا
+    mins = {"followers": 20, "likes": 20, "views": 100, "shares": 100}
+    if amount < mins.get(service, 1):
+        return jsonify({"ok": False, "msg": f"الحد الأدنى لـ {service} هو {mins.get(service)}"})
     m = mgr()
     acc = next((a for a in m.accs() if a["username"] == acc_name), None)
     if not acc: return jsonify({"ok": False, "msg": "الحساب غير موجود"})
     t, c, user = B.login(acc_name, acc["password"])
     if not t: return jsonify({"ok": False, "msg": "فشل الدخول"})
     B.attest(t, c, None, acc_name)
+    # نجيب avatar للمتابعين
+    avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
+    if service == "followers":
+        # نجرب نجيب avatar من الحساب المستهدف
+        try:
+            q_av = {"operationName": "GetUsers", "variables": {},
+                "query": "query GetUsers { getUsers(username: \"" + target + "\") { avatar } }"}
+            _, dav = B.graphql(q_av, "GetUsers", True, t, c, None, username=acc_name)
+            if "errors" not in dav:
+                users = dav.get("data", {}).get("getUsers", [])
+                if users and users[0].get("avatar"):
+                    avatar = users[0]["avatar"]
+        except: pass
     before = user.get("score", 0) or 0
-    ok, result = B.create_order(t, c, service, target, amount, None, None, acc_name)
+    ok, result = B.create_order(t, c, service, target, amount, avatar, None, None, acc_name)
     entry = {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "account": acc_name, "service": service, "target": target, "amount": amount,
@@ -342,7 +359,7 @@ def api_buy():
         tx.append(entry)
         if len(tx) > 1000: tx = tx[-1000:]
         usave(m.phone, "transactions", tx)
-        return jsonify({"ok": True, "msg": "✅ تم الشراء", "tx": entry})
+        return jsonify({"ok": True, "msg": "✅ تم الشراء!", "tx": entry})
     tx.append(entry)
     if len(tx) > 1000: tx = tx[-1000:]
     usave(m.phone, "transactions", tx)
