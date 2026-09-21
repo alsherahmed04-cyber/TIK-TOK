@@ -319,7 +319,7 @@ def api_buy():
     if not acc_name or not service or not target or amount <= 0:
         return jsonify({"ok": False, "msg": "أدخل كل البيانات"})
     # الحدود الدنيا
-    mins = {"followers": 20, "likes": 20, "views": 100, "shares": 100}
+    mins = {"followers": 20, "likes": 20, "views": 100, "shares": 100, "comments": 20, "save": 100}
     if amount < mins.get(service, 1):
         return jsonify({"ok": False, "msg": f"الحد الأدنى لـ {service} هو {mins.get(service)}"})
     m = mgr()
@@ -330,7 +330,7 @@ def api_buy():
     B.attest(t, c, None, acc_name)
     # نجيب avatar للمتابعين
     avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
-    if service == "followers":
+    if service in ("followers",):
         # نجرب نجيب avatar من الحساب المستهدف
         try:
             q_av = {"operationName": "GetUsers", "variables": {},
