@@ -275,6 +275,41 @@ def api_history_clear():
     save_history([])
     return jsonify({"ok": True, "msg": "تم مسح السجل التاريخي"})
 
+
+@app.route("/api/buy", methods=["POST"])
+def api_buy():
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
+    d = request.json or {}
+    acc_name = (d.get("account") or "").strip()
+    service = (d.get("service") or "").strip()
+    target = (d.get("target") or "").strip()
+    amount = int(d.get("amount", 0) or 0)
+    extra = (d.get("extra") or "").strip()
+    if not acc_name or not service or not target or amount <= 0:
+        return jsonify({"ok": False, "msg": "أدخل كل البيانات المطلوبة"})
+    data = load_data()
+    acc = next((a for a in data.get("accounts", []) if a["username"] == acc_name), None)
+    if not acc:
+        return jsonify({"ok": False, "msg": "الحساب غير موجود"})
+    # تسجيل دخول
+    t, c, user = B.login(acc_name, acc["password"])
+    if not t:
+        return jsonify({"ok": False, "msg": "فشل تسجيل الدخول للحساب"})
+    B.attest(t, c, None, acc_name)
+    current_score = user.get("score", 0) or 0
+    # محاولة الشراء
+    ok, result = B.create_order(t, c, service, target, amount, extra, None, acc_name)
+    if ok:
+        # جلب الرصيد الجديد
+        new_score = B.fetch_score(t, c, None, acc_name)
+        if new_score is not None:
+            manager.set_score(acc_name, new_score)
+        manager.log(f"[BUY] {acc_name}: {service} × {amount} → {target} | ✅ نجح")
+        return jsonify({"ok": True, "msg": f"✅ تم الشراء! الرصيد الجديد: {new_score if new_score is not None else current_score}", "order": result, "new_score": new_score})
+    else:
+        manager.log(f"[BUY] {acc_name}: {service} × {amount} → {target} | ❌ {result}")
+        return jsonify({"ok": False, "msg": f"❌ فشل: {result}"})
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port, threaded=True)
