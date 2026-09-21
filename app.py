@@ -41,17 +41,18 @@ class Manager:
     def run_account(self, acc):
         u = acc["username"]
         p = acc.get("password", "")
+        px = (acc.get("proxy") or "").strip() or None
         self.status[u] = "جاري الدخول"
-        t, c, user = B.login(u, p)
+        t, c, user = B.login(u, p, px)
         if not t:
             self.status[u] = "فشل الدخول"
             self.log(f"[X] {u}: فشل الدخول")
             return
-        B.attest(t, c)
+        B.attest(t, c, px)
         self.set_score(u, user.get("score", 0))
         self.status[u] = "شغال"
         self.log(f"[OK] {u} متصل")
-        B.farmer(u, t, c, self.stop_event, self.log, lambda s: self.set_score(u, s))
+        B.farmer(u, t, c, self.stop_event, self.log, px, lambda s: self.set_score(u, s))
         self.status[u] = "متوقف"
     def start_one(self, acc, delay=0):
         if delay: time.sleep(delay)
@@ -136,7 +137,7 @@ def api_add():
     data = load_data()
     if any(a["username"] == u for a in data["accounts"]):
         return jsonify({"ok": False, "msg": "الحساب موجود"})
-    new_acc = {"username": u, "password": p}
+    new_acc = {"username": u, "password": p, "proxy": (d.get("proxy") or "").strip()}
     data["accounts"].append(new_acc)
     save_data(data)
     if manager.running:

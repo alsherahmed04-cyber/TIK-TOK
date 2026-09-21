@@ -10,10 +10,14 @@ OP_IDS = {
 }
 URL = "https://api.tikspark.xyz/graphql"
 
+def _proxies(proxy):
+    if not proxy: return None
+    return {"http": proxy, "https": proxy}
+
 def signature(ts, nonce, payload):
     return hmac.new(KEY, f"{ts}-{nonce}-{payload}".encode(), hashlib.sha256).hexdigest()
 
-def graphql(query, op, auth=True, token=None, csrf=None):
+def graphql(query, op, auth=True, token=None, csrf=None, proxy=None):
     payload = json.dumps(query, separators=(',', ':'))
     ts = str(int(time.time() * 1000))
     nonce = str(uuid.uuid4())[:16]
@@ -31,19 +35,19 @@ def graphql(query, op, auth=True, token=None, csrf=None):
         headers["token"] = token
         headers["x-csrf-token"] = csrf
     try:
-        r = requests.post(URL, headers=headers, data=payload, timeout=20)
+        r = requests.post(URL, headers=headers, data=payload, timeout=20, proxies=_proxies(proxy))
         return r, r.json()
     except Exception as e:
         return None, {"error": str(e)}
 
-def login(username, password, retries=5):
+def login(username, password, proxy=None, retries=5):
     q = {"operationName": "LoginAccount",
         "variables": {"data": {"id": "", "uniqueId": username, "nickname": "",
             "avatarMedium": "", "followerCount": 0, "followingCount": 0, "videoCount": 0,
             "privateAccount": False, "diggCount": 0, "authMethod": "local", "password": password}},
         "query": "mutation LoginAccount($data: TiktokInfo) { loginTiktok(data: $data) { accessToken refreshToken user { __typename ...UserFields } } } fragment UserFields on User { _id tiktokId nickname email score diggCount followerCount followingCount friendCount isMembershipExpired heartCount username avatar banned vip vipExpiresAt authMethod isSubscription allowd referralCode referralCount referredBy }"}
     for attempt in range(retries):
-        resp, data = graphql(q, "LoginAccount", auth=False)
+        resp, data = graphql(q, "LoginAccount", auth=False, proxy=proxy)
         if resp and "errors" not in data:
             t = data['data']['loginTiktok']['accessToken']
             c = resp.headers.get("x-csrf-token", "")
@@ -61,22 +65,22 @@ def login(username, password, retries=5):
         return None, None, None
     return None, None, None
 
-def attest(token, csrf):
+def attest(token, csrf, proxy=None):
     q = {"operationName": "AttestDevice",
         "variables": {"integrityToken": "CpsCARCnMGtvLkiuhYFGDW3rUoE73im9X9NmXA1cHOZZOzgRp5FtsmIrZBoNek0K7XIoZiR9XKg1bpApXNem9MbcR4UiIxz1n4Wgv_LA4hSSAbHzpaAfXcnLyKgwnOXGRUieQ4OOpMTMDRxD6O7kd3jjAfcbcHFt3bdgyw7CJYpxz4oq3lIti658lCdnt1NvJzUwfYSp6eWKcvKV5lScaq-nkplRn7hz38A8kLhYNx6w-7rne41hWCR6BQISVfBewaqeh7RL-9iEDrzK-ECbdEwBnpO-LfAqCJKn1bf5VkVxuPAz5qPvB8cNE7ZBMAyMnDHdjNDwpnZMA2EXsgRsyT6Fm_l3MNugWDdWbRgww6sAw6KrRzeBDETsXTh1ZBpqAWerZWp6AIjaDa-b0NFbOS69HsGnfpE7hljmu7OTsd4tM6nM50qiSc4QGuD4aM-joJFkYKIsWf_grquB66bYnYa2mCWcPl1hIEApHMXbCLiO7nwX-8LXEwCDvVNT4f8mjgtI1__D_C-f4g",
                     "requestHash": "gPyB7FF-XeZc2kwi2L-KZXs21Z8oPErvHD9gn572PyM"},
         "query": "mutation AttestDevice($integrityToken: String!, $requestHash: String!) { attestDevice(integrityToken: $integrityToken, requestHash: $requestHash) { ok verified } }"}
-    _, data = graphql(q, "AttestDevice", True, token, csrf)
+    _, data = graphql(q, "AttestDevice", True, token, csrf, proxy)
     return "errors" not in data
 
-def fetch_score(token, csrf):
+def fetch_score(token, csrf, proxy=None):
     q = {"operationName": "FetchScore", "variables": {}, "query": "query FetchScore { fetchScore }"}
-    _, data = graphql(q, "FetchScore", True, token, csrf)
+    _, data = graphql(q, "FetchScore", True, token, csrf, proxy)
     return data.get("data", {}).get("fetchScore") if "errors" not in data else None
 
-def farmer(username, token, csrf, stop_event, logger, score_callback=None):
+def farmer(username, token, csrf, stop_event, logger, proxy=None, score_callback=None):
     logger(f"[~] {username}: بدء التجميع")
-    s = fetch_score(token, csrf)
+    s = fetch_score(token, csrf, proxy)
     if s is not None and score_callback: score_callback(s)
     err_count = 0
     last_status = time.time()
@@ -84,7 +88,7 @@ def farmer(username, token, csrf, stop_event, logger, score_callback=None):
     while not stop_event.is_set():
         try:
             q = {"operationName": "GetOrders", "variables": {}, "query": "query GetOrders { getOrders { _id status } }"}
-            _, data = graphql(q, "GetOrders", True, token, csrf)
+            _, data = graphql(q, "GetOrders", True, token, csrf, proxy)
             if "errors" in data:
                 err_count += 1
                 err = data.get("errors", [{}])[0].get("message", "?")
@@ -111,7 +115,7 @@ def farmer(username, token, csrf, stop_event, logger, score_callback=None):
                             "timeSpent": float(random.randint(4000, 7000)),
                             "actualCount": rnd + 1, "source": "CLIENT_CRONET"}},
                     "query": "mutation ActionOrder($orderId: ID!, $validationData: ValidationDataInput!) { actionOrder(orderId: $orderId, validationData: $validationData) { score } }"}
-                _, result = graphql(q, "ActionOrder", True, token, csrf)
+                _, result = graphql(q, "ActionOrder", True, token, csrf, proxy)
                 if "errors" not in result:
                     s = fetch_score(token, csrf)
                     if s is not None:
