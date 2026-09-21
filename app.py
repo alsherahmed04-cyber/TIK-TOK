@@ -175,6 +175,28 @@ def api_forgot_reset():
 @app.route("/")
 def home(): return "<h1>MOON API Running</h1>"
 
+
+def fetch_my_orders(phone, username):
+    """جلب الأوامر المُسندة للحساب من getOrders"""
+    try:
+        acc = next((a for a in fs.load_accounts(phone).get("accounts", []) if a["username"] == username), None)
+        if not acc: return []
+        t, c, user = B.login(username, acc.get("password", ""))
+        if not t: return []
+        q = {"operationName": "GetOrders", "variables": {},
+             "query": "query GetOrders { getOrders { _id type amount status score fulfilled createdAt videoLink tiktokerUsername } }"}
+        _, data = B.graphql(q, "GetOrders", True, t, c)
+        if "errors" not in data:
+            return data.get("data", {}).get("getOrders", []) or []
+    except Exception as e:
+        pass
+    return []
+
+@app.route("/api/orders/<username>")
+def api_orders(username):
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
+    return jsonify({"orders": fetch_my_orders(get_phone(), username)})
+
 @app.route("/api/data")
 def api_data():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
