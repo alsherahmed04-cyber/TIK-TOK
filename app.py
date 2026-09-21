@@ -1,23 +1,18 @@
 import os, json, threading
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import bot as B
 
 app = Flask(__name__)
-CORS(app, resources={r"\/*": {"origins": "*"}})
+
+# CORS: اسمح لأي origin مع الهيدرز المطلوبة
+CORS(app, resources={r"/*": {"origins": "*"}},
+     allow_headers=["Content-Type", "X-Password"],
+     methods=["GET", "POST", "OPTIONS"],
+     supports_credentials=False)
+
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Ahmed")
 ACC_FILE = "accounts.json"
 lock = threading.Lock()
-
-@app.after_request
-def add_cors(resp):
-    resp.headers["Access-Control-Allow-Origin"] = "*"
-    resp.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
-    resp.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-    return resp
-
-@app.route("/api/<path:p>", methods=["OPTIONS"])
-def preflight(p): return "", 204
 
 def load_data():
     with lock:
@@ -44,6 +39,7 @@ class Manager:
             self.logs.append(msg)
             if len(self.logs) > 2000: self.logs.pop(0)
     def run_account(self, acc, target, avatar, init_count):
+        import bot as B
         u = acc["username"]
         self.status[u] = "جاري الدخول"
         t, c, user = B.login(u, acc["password"])
@@ -57,6 +53,7 @@ class Manager:
         B.farmer(u, t, c, target, avatar, init_count, self.stop_event, self.log)
         self.status[u] = "متوقف"
     def start(self):
+        import bot as B
         if self.running: return False, "البوت شغال بالفعل"
         data = load_data()
         accounts = data.get("accounts", [])
@@ -85,14 +82,15 @@ class Manager:
 
 manager = Manager()
 
-def check_auth():
-    pwd = request.headers.get("X-Password") or (request.json or {}).get("password") if request.is_json else request.headers.get("X-Password")
-    return (request.headers.get("X-Password") or "") == ADMIN_PASSWORD
+def auth_ok():
+    return request.headers.get("X-Password") == ADMIN_PASSWORD
+
+@app.route("/")
+def home(): return "<h1>MOON API Running</h1>"
 
 @app.route("/api/data")
 def api_data():
-    if request.headers.get("X-Password") != ADMIN_PASSWORD:
-        return jsonify({"error": "unauthorized"}), 401
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     d = load_data()
     with manager.log_lock: logs = list(manager.logs[-200:])
     return jsonify({"accounts": d.get("accounts", []), "target_user": d.get("target_user", ""),
@@ -100,29 +98,25 @@ def api_data():
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
-    if request.headers.get("X-Password") != ADMIN_PASSWORD:
-        return jsonify({"error": "unauthorized"}), 401
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     ok, msg = manager.start()
     return jsonify({"ok": ok, "msg": msg})
 
 @app.route("/api/stop", methods=["POST"])
 def api_stop():
-    if request.headers.get("X-Password") != ADMIN_PASSWORD:
-        return jsonify({"error": "unauthorized"}), 401
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     ok, msg = manager.stop()
     return jsonify({"ok": ok, "msg": msg})
 
 @app.route("/api/clear", methods=["POST"])
 def api_clear():
-    if request.headers.get("X-Password") != ADMIN_PASSWORD:
-        return jsonify({"error": "unauthorized"}), 401
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     with manager.log_lock: manager.logs.clear()
     return jsonify({"ok": True, "msg": "تم المسح"})
 
 @app.route("/api/add", methods=["POST"])
 def api_add():
-    if request.headers.get("X-Password") != ADMIN_PASSWORD:
-        return jsonify({"error": "unauthorized"}), 401
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     d = request.json or {}
     u = (d.get("username") or "").strip()
     p = (d.get("password") or "").strip()
@@ -136,8 +130,7 @@ def api_add():
 
 @app.route("/api/delete", methods=["POST"])
 def api_delete():
-    if request.headers.get("X-Password") != ADMIN_PASSWORD:
-        return jsonify({"error": "unauthorized"}), 401
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     d = request.json or {}
     u = (d.get("username") or "").strip()
     data = load_data()
@@ -148,8 +141,7 @@ def api_delete():
 
 @app.route("/api/target", methods=["POST"])
 def api_target():
-    if request.headers.get("X-Password") != ADMIN_PASSWORD:
-        return jsonify({"error": "unauthorized"}), 401
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     d = request.json or {}
     u = (d.get("username") or "").strip()
     data = load_data()
@@ -158,17 +150,6 @@ def api_target():
     data["target_user"] = u
     save_data(data)
     return jsonify({"ok": True, "msg": f"الهدف: {u}"})
-
-@app.route("/api/auth", methods=["POST"])
-def api_auth():
-    d = request.json or {}
-    if d.get("password") == ADMIN_PASSWORD:
-        return jsonify({"ok": True})
-    return jsonify({"ok": False, "msg": "كلمة المرور غلط"}), 401
-
-@app.route("/")
-def home():
-    return "<h1>MOON API Running</h1>"
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
