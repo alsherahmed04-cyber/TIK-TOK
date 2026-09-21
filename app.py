@@ -192,6 +192,28 @@ def fetch_my_orders(phone, username):
         pass
     return []
 
+
+def fetch_my_purchases(phone, username):
+    """جلب أوامر الشراء (myOrders) مع التقدم الحقيقي"""
+    try:
+        acc = next((a for a in fs.load_accounts(phone).get("accounts", []) if a["username"] == username), None)
+        if not acc: return []
+        t, c, user = B.login(username, acc.get("password", ""))
+        if not t: return []
+        q = {"operationName": None, "variables": {},
+             "query": "query { myOrders { _id type amount status fulfilled createdAt videoLink tiktokerUsername } }"}
+        _, data = B.graphql(q, None, True, t, c)
+        if "errors" not in data:
+            return data.get("data", {}).get("myOrders", []) or []
+    except Exception as e:
+        pass
+    return []
+
+@app.route("/api/purchases/<username>")
+def api_purchases(username):
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
+    return jsonify({"purchases": fetch_my_purchases(get_phone(), username)})
+
 @app.route("/api/orders/<username>")
 def api_orders(username):
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
@@ -324,7 +346,7 @@ def api_buy():
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "account": acc_name, "service": service, "target": target, "amount": amount,
         "before": before, "after": before, "cost": 0,
-        "ok": bool(ok), "msg": result if not ok else "تم"
+        "ok": bool(ok), "msg": result if not ok else "تم", "order_id": (result.get("_id") if isinstance(result, dict) else None)
     }
     if ok:
         ns = B.fetch_score(t, c)
