@@ -2,6 +2,8 @@ import requests, hmac, hashlib, time, uuid, json, random, re
 
 import hashlib as _hl
 
+DEVINFO = '{"d":"61393235613366373261636533656632","n":"494e46494e495820496e66696e6978205836383733","o":"16","t":"d","v":"2.2.9","s":"0,0"}'
+
 def _proxies(proxy):
     if not proxy: return None
     return {"http": proxy, "https": proxy}
