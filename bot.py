@@ -65,6 +65,7 @@ def login(username, password=None, retries=3):
             token = data['data']['loginTiktok']['accessToken']
             csrf = resp.headers.get("x-csrf-token", "")
             user = data['data']['loginTiktok']['user']
+            print(f"\033[1;32m[✓] {user.get('username', username)} – الرصيد: {user.get('score', 0)}\033[0m")
             return token, csrf, user
         else:
             err = data.get("errors", [{"message": "غير معروف"}])[0]["message"]
@@ -76,13 +77,17 @@ def login(username, password=None, retries=3):
                         wait = int(match.group(1)) + 1
                 except:
                     pass
+                print(f"\033[1;33m[~] حد المعدل، انتظار {wait} ثانية ثم إعادة المحاولة ({attempt+1}/{retries})...\033[0m")
                 time.sleep(wait)
                 continue
             else:
+                print(f"\033[1;31m[✗] {username}: {err}\033[0m")
                 return None, None, {"error": err}
-    return None, None, {"error": "فشل بعد محاولات"}
+    print(f"\033[1;31m[✗] فشل تسجيل الدخول لـ {username} بعد {retries} محاولات\033[0m")
+    return None, None, {"error": "فشل"}
 
 def attest(token, csrf):
+    print("\033[1;33m[~] جاري التحقق من الجهاز...\033[0m")
     q = {
         "operationName": "AttestDevice",
         "variables": {
@@ -92,7 +97,11 @@ def attest(token, csrf):
         "query": "mutation AttestDevice($integrityToken: String!, $requestHash: String!) { attestDevice(integrityToken: $integrityToken, requestHash: $requestHash) { ok verified } }"
     }
     _, data = graphql(q, "AttestDevice", True, token, csrf)
-    return "errors" not in data
+    if "errors" not in data:
+        print("\033[1;32m[✓] تم التحقق بنجاح\033[0m")
+        return True
+    print("\033[1;31m[✗] فشل التحقق\033[0m")
+    return False
 
 def fetch_user_data(token, csrf):
     q = {
@@ -115,31 +124,10 @@ def fetch_score(token, csrf):
         return data.get("data", {}).get("fetchScore")
     return None
 
-def create_order(token, csrf, service_type, target, amount, avatar="", extra=None):
-    if not avatar:
-        avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
-    order_input = {"type": service_type, "amount": int(amount), "avatar": avatar}
-    if service_type == "followers":
-        order_input["tiktokerUsername"] = target
-    else:
-        order_input["videoLink"] = target
-    q = {
-        "operationName": "CreateOrder",
-        "variables": {"orderInput": order_input},
-        "query": "mutation CreateOrder($orderInput: OrderInput!) { createOrder(orderInput: $orderInput) { _id type amount status score createdAt } }"
-    }
-    _, data = graphql(q, "CreateOrder", True, token, csrf)
-    if "errors" not in data:
-        return True, data.get("data", {}).get("createOrder", {})
-    return False, data.get("errors", [{}])[0].get("message", "خطأ غير معروف")
-
 def farmer(username, token, csrf, stop_event=None, logger=None, proxy=None, score_callback=None):
     if logger is None:
         logger = print
-    logger(f"[~] {username}: بدء التجميع")
-    s = fetch_score(token, csrf)
-    if s is not None and score_callback:
-        score_callback(s)
+    logger(f"[~] بدء التجميع لـ {username}...")
     while True:
         if stop_event is not None and stop_event.is_set():
             break
@@ -184,3 +172,21 @@ def farmer(username, token, csrf, stop_event=None, logger=None, proxy=None, scor
             time.sleep(5)
     if logger:
         logger(f"[{username}] ⏹ توقف")
+
+def create_order(token, csrf, service_type, target, amount, avatar="", extra=None):
+    if not avatar:
+        avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
+    order_input = {"type": service_type, "amount": int(amount), "avatar": avatar}
+    if service_type == "followers":
+        order_input["tiktokerUsername"] = target
+    else:
+        order_input["videoLink"] = target
+    q = {
+        "operationName": "CreateOrder",
+        "variables": {"orderInput": order_input},
+        "query": "mutation CreateOrder($orderInput: OrderInput!) { createOrder(orderInput: $orderInput) { _id type amount status score createdAt } }"
+    }
+    _, data = graphql(q, "CreateOrder", True, token, csrf)
+    if "errors" not in data:
+        return True, data.get("data", {}).get("createOrder", {})
+    return False, data.get("errors", [{}])[0].get("message", "خطأ غير معروف")
