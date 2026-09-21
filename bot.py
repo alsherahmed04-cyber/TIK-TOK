@@ -82,6 +82,7 @@ def farmer(username, token, csrf, stop_event, logger, proxy=None, score_callback
     logger(f"[~] {username}: بدء التجميع")
     s = fetch_score(token, csrf, proxy)
     if s is not None and score_callback: score_callback(s)
+    baseline = s if s is not None else 0
     err_count = 0
     last_status = time.time()
     stop_event.wait(random.uniform(0.5, 3.0))
@@ -91,41 +92,49 @@ def farmer(username, token, csrf, stop_event, logger, proxy=None, score_callback
             _, data = graphql(q, "GetOrders", True, token, csrf, proxy)
             if "errors" in data:
                 err_count += 1
-                err = data.get("errors", [{}])[0].get("message", "?")
-                if err_count <= 3 or err_count % 30 == 0:
-                    logger(f"[{username}] GetOrders: {err}")
+                if err_count <= 3:
+                    logger(f"[{username}] GetOrders: {data.get('errors',[{}])[0].get('message','?')[:60]}")
                 stop_event.wait(random.uniform(4, 8))
                 continue
             err_count = 0
             orders = data.get("data", {}).get("getOrders", []) or []
-            pending = [o["_id"] for o in orders if o.get("status") == "pending"]
+            pending = [o for o in orders if o.get("status") == "pending"]
             now = time.time()
-            if now - last_status > 45:
+            if now - last_status > 60:
                 logger(f"[{username}] {len(orders)} أوامر, {len(pending)} معلقة")
                 last_status = now
             if not pending:
                 stop_event.wait(random.uniform(2, 5))
                 continue
-            for task in pending:
+            for order in pending:
                 if stop_event.is_set(): break
-                rnd = random.randint(3000, 4500)
+                # نجلب الرصيد الحالي ليكون baseline صحيح
+                cur = fetch_score(token, csrf, proxy)
+                if cur is not None:
+                    baseline = cur
+                    if score_callback: score_callback(cur)
+                step = random.randint(3000, 4500)
                 q = {"operationName": "ActionOrder",
-                    "variables": {"orderId": task,
-                        "validationData": {"attempts": 1, "initialNumber": float(rnd),
+                    "variables": {"orderId": order["_id"],
+                        "validationData": {"attempts": 1,
+                            "initialNumber": float(baseline),
                             "timeSpent": float(random.randint(4000, 7000)),
-                            "actualCount": rnd + 1, "source": "CLIENT_CRONET"}},
+                            "actualCount": float(baseline + step),
+                            "source": "CLIENT_CRONET"}},
                     "query": "mutation ActionOrder($orderId: ID!, $validationData: ValidationDataInput!) { actionOrder(orderId: $orderId, validationData: $validationData) { score } }"}
                 _, result = graphql(q, "ActionOrder", True, token, csrf, proxy)
                 if "errors" not in result:
-                    s = fetch_score(token, csrf)
-                    if s is not None:
-                        logger(f"[{username}] ✓ الرصيد: {s}")
-                        if score_callback: score_callback(s)
+                    new_score = result.get("data",{}).get("actionOrder",{}).get("score")
+                    if new_score is not None:
+                        baseline = new_score
+                        logger(f"[{username}] ✓ الرصيد: {new_score}")
+                        if score_callback: score_callback(new_score)
                 else:
-                    err = result.get("errors", [{}])[0].get("message", "?")
-                    logger(f"[{username}] ActionOrder: {err}")
+                    err = result.get("errors",[{}])[0].get("message","?")
+                    if "INVALID_VALIDATION" not in err:
+                        logger(f"[{username}] ActionOrder: {err[:60]}")
                 stop_event.wait(random.uniform(1.0, 2.5))
         except Exception as e:
-            logger(f"[{username}] خطأ: {e}")
+            logger(f"[{username}] خطأ: {str(e)[:80]}")
             stop_event.wait(5)
     logger(f"[{username}] ⏹ توقف")
