@@ -1,23 +1,6 @@
 import requests, hmac, hashlib, time, uuid, json, random, re
 
 import hashlib as _hl
-BASE_DEVINFO = {"d":"61393235613366373261636533656632","n":"494e46494e495820496e66696e6978205836383733","o":"16","t":"d","v":"2.2.9","s":"0,0"}
-
-def get_devinfo(username):
-    """ينشئ بصمة جهاز فريدة لكل حساب"""
-    h = _hl.md5(("moon_"+username).encode()).hexdigest()
-    info = dict(BASE_DEVINFO)
-    info["d"] = h[:32]
-    info["n"] = "SAMSUNG SM-G991B " + h[8:14].upper()
-    return json.dumps(info, separators=(',',':'))
-KEY = bytes([b ^ 0x43 for b in [0x35,0x30,0x1c,0x2f,0x2c,0x2c,0x28,0x31,0x35,0x30,0x1c,0x2f,0x2c,0x2c,0x28,0x31]])
-OP_IDS = {
-    "LoginAccount": "3522613813036d73817b2715e67743f8d23d7a85ad08b7e12aa3b29a24a17c43",
-    "AttestDevice": "bfaf5a72aeb9a337811da6a6d13e0b73680a18ffde0c59a23701e55b98ac2515",
-    "FetchScore": "88d30eeca55c0538539ad8217dfefd52b2f47015200cdbb7cb6ea5a765381d69",
-    "GetUsers": "41454e2194d7c30f1c6e11c2c246bcc0377da65a8bf06276ca5ea9ec9ff538b6"
-}
-URL = "https://api.tikspark.xyz/graphql"
 
 def _proxies(proxy):
     if not proxy: return None
@@ -34,7 +17,7 @@ def graphql(query, op, auth=True, token=None, csrf=None, proxy=None, username=No
         "X-APOLLO-OPERATION-NAME": op,
         "Accept": "multipart/mixed; deferSpec=20220824, application/json",
         "x-language": "ar", "x-app-name": "com.dev.vidspark",
-        "x-device-info": get_devinfo(username) if username else json.dumps(BASE_DEVINFO, separators=(",",":")),
+        "x-device-info": DEVINFO,
         "x-app-sig": signature(ts, nonce, payload),
         "x-app-ts": ts, "x-app-nonce": nonce,
         "Content-Type": "application/json", "User-Agent": "okhttp/4.12.0"
@@ -56,7 +39,7 @@ def login(username, password, proxy=None, retries=5):
             "privateAccount": False, "diggCount": 0, "authMethod": "local", "password": password}},
         "query": "mutation LoginAccount($data: TiktokInfo) { loginTiktok(data: $data) { accessToken refreshToken user { __typename ...UserFields } } } fragment UserFields on User { _id tiktokId nickname email score diggCount followerCount followingCount friendCount isMembershipExpired heartCount username avatar banned vip vipExpiresAt authMethod isSubscription allowd referralCode referralCount referredBy }"}
     for attempt in range(retries):
-        resp, data = graphql(q, "LoginAccount", auth=False, proxy=proxy, username=username)
+        resp, data = graphql(q, "LoginAccount", auth=False, proxy=proxy)
         if resp and "errors" not in data:
             t = data['data']['loginTiktok']['accessToken']
             c = resp.headers.get("x-csrf-token", "")
@@ -79,12 +62,12 @@ def attest(token, csrf, proxy=None, username=None):
         "variables": {"integrityToken": "CpsCARCnMGtvLkiuhYFGDW3rUoE73im9X9NmXA1cHOZZOzgRp5FtsmIrZBoNek0K7XIoZiR9XKg1bpApXNem9MbcR4UiIxz1n4Wgv_LA4hSSAbHzpaAfXcnLyKgwnOXGRUieQ4OOpMTMDRxD6O7kd3jjAfcbcHFt3bdgyw7CJYpxz4oq3lIti658lCdnt1NvJzUwfYSp6eWKcvKV5lScaq-nkplRn7hz38A8kLhYNx6w-7rne41hWCR6BQISVfBewaqeh7RL-9iEDrzK-ECbdEwBnpO-LfAqCJKn1bf5VkVxuPAz5qPvB8cNE7ZBMAyMnDHdjNDwpnZMA2EXsgRsyT6Fm_l3MNugWDdWbRgww6sAw6KrRzeBDETsXTh1ZBpqAWerZWp6AIjaDa-b0NFbOS69HsGnfpE7hljmu7OTsd4tM6nM50qiSc4QGuD4aM-joJFkYKIsWf_grquB66bYnYa2mCWcPl1hIEApHMXbCLiO7nwX-8LXEwCDvVNT4f8mjgtI1__D_C-f4g",
                     "requestHash": "gPyB7FF-XeZc2kwi2L-KZXs21Z8oPErvHD9gn572PyM"},
         "query": "mutation AttestDevice($integrityToken: String!, $requestHash: String!) { attestDevice(integrityToken: $integrityToken, requestHash: $requestHash) { ok verified } }"}
-    _, data = graphql(q, "AttestDevice", True, token, csrf, proxy, username=username)
+    _, data = graphql(q, "AttestDevice", True, token, csrf, proxy)
     return "errors" not in data
 
 def fetch_score(token, csrf, proxy=None, username=None):
     q = {"operationName": "FetchScore", "variables": {}, "query": "query FetchScore { fetchScore }"}
-    _, data = graphql(q, "FetchScore", True, token, csrf, proxy, username=username)
+    _, data = graphql(q, "FetchScore", True, token, csrf, proxy)
     return data.get("data", {}).get("fetchScore") if "errors" not in data else None
 
 def create_order(token, csrf, service_type, target, amount, avatar="", extra=None, proxy=None, username=None):
@@ -105,75 +88,57 @@ def create_order(token, csrf, service_type, target, amount, avatar="", extra=Non
         "variables": {"orderInput": order_input},
         "query": "mutation CreateOrder($orderInput: OrderInput!) { createOrder(orderInput: $orderInput) { _id type amount status score createdAt } }"
     }
-    _, data = graphql(q, None, True, token, csrf, proxy, username=username)
+    _, data = graphql(q, None, True, token, csrf, proxy)
     if "errors" not in data:
         return True, data.get("data", {}).get("createOrder", {})
     return False, data.get("errors", [{}])[0].get("message", "خطأ غير معروف")
 
 def farmer(username, token, csrf, stop_event, logger, proxy=None, score_callback=None):
+    """نسخة طبق الأصل من T.py الأصلي"""
     logger(f"[~] {username}: بدء التجميع")
-    s = fetch_score(token, csrf, proxy, username=username)
+    # الرصيد الابتدائي
+    s = fetch_score(token, csrf)
     if s is not None and score_callback: score_callback(s)
-    skip_until = 0
-    last_status = time.time()
-    stop_event.wait(random.uniform(0.5, 3.0))
     while not stop_event.is_set():
         try:
-            now = time.time()
-            if now < skip_until:
-                stop_event.wait(skip_until - now)
-                continue
             q = {"operationName": "GetOrders", "variables": {}, "query": "query GetOrders { getOrders { _id status } }"}
-            _, data = graphql(q, "GetOrders", True, token, csrf, proxy, username=username)
-            if "errors" in data:
-                err = data.get("errors",[{}])[0].get("message","")[:60]
-                logger(f"[{username}] GetOrders: {err}")
-                stop_event.wait(random.uniform(5, 10))
-                continue
+            _, data = graphql(q, "GetOrders", True, token, csrf)
             orders = data.get("data", {}).get("getOrders", []) or []
-            pending = [o for o in orders if o.get("status") == "pending"]
-            if time.time() - last_status > 90:
-                logger(f"[{username}] {len(orders)} أوامر، {len(pending)} معلقة")
-                last_status = time.time()
+            pending = [o["_id"] for o in orders if o.get("status") == "pending"]
             if not pending:
-                stop_event.wait(random.uniform(3, 6))
+                stop_event.wait(10)
                 continue
-            # خد أول أمر واشتغل عليه
-            order = pending[0]
-            rnd = random.randint(3000, 4500)
-            q = {"operationName": "ActionOrder",
-                "variables": {"orderId": order["_id"],
-                    "validationData": {"attempts": 1,
-                        "initialNumber": float(rnd),
-                        "timeSpent": float(random.randint(4000, 7000)),
-                        "actualCount": float(rnd + 1),
-                        "source": "CLIENT_CRONET"}},
-                "query": "mutation ActionOrder($orderId: ID!, $validationData: ValidationDataInput!) { actionOrder(orderId: $orderId, validationData: $validationData) { score } }"}
-            _, result = graphql(q, "ActionOrder", True, token, csrf, proxy, username=username)
-            if "errors" not in result:
-                score = fetch_score(token, csrf, proxy, username)
-                if score is not None:
-                    logger(f"[{username}] ✓ الرصيد: {score}")
-                    if score_callback: score_callback(score)
-                stop_event.wait(random.uniform(2, 4))
-            else:
-                err = result.get("errors",[{}])[0].get("message","?")
-                if "Rate limit" in err or "Too many requests" in err:
-                    logger(f"[{username}] ⏳ انتظار 10ث (Rate limit)")
-                    stop_event.wait(10)
-                elif "TASK_ALREADY_SUBMITTED" in err:
-                    logger(f"[{username}] ⏭ مهمة مكررة - تخطي")
-                    stop_event.wait(3)
-                elif "TASK_TOO_FAST" in err:
-                    logger(f"[{username}] ⏳ بسرعة زيادة - انتظار 8ث")
-                    stop_event.wait(8)
-                elif "INVALID_VALIDATION" in err:
-                    stop_event.wait(random.uniform(2, 4))
-                elif "TASK_UNAVAILABLE" in err:
-                    stop_event.wait(5)
+            for task in pending:
+                if stop_event.is_set(): break
+                rnd = random.randint(3000, 4500)
+                q = {"operationName": "ActionOrder",
+                    "variables": {"orderId": task,
+                        "validationData": {"attempts": 1,
+                            "initialNumber": float(rnd),
+                            "timeSpent": float(random.randint(4000, 7000)),
+                            "actualCount": rnd + 1,
+                            "source": "CLIENT_CRONET"}},
+                    "query": "mutation ActionOrder($orderId: ID!, $validationData: ValidationDataInput!) { actionOrder(orderId: $orderId, validationData: $validationData) { score taskProgress { count startTime taskProgressLimit } } }"}
+                _, result = graphql(q, "ActionOrder", True, token, csrf)
+                if "errors" not in result:
+                    score = fetch_score(token, csrf)
+                    if score is not None:
+                        logger(f"[{username}] ✓ تمت المهمة! الرصيد: {score}")
+                        if score_callback: score_callback(score)
+                    else:
+                        logger(f"[{username}] ✓ تمت المهمة!")
                 else:
-                    logger(f"[{username}] {err[:70]}")
-                    stop_event.wait(5)
+                    err = result.get("errors",[{}])[0].get("message","")[:60]
+                    if "Rate limit" in err or "Too many" in err:
+                        logger(f"[{username}] ⏳ {err}")
+                        stop_event.wait(5)
+                    elif "TASK_ALREADY_SUBMITTED" in err:
+                        pass
+                    elif "TASK_UNAVAILABLE" in err or "TASK_TOO_FAST" in err:
+                        pass
+                    else:
+                        logger(f"[{username}] {err}")
+                stop_event.wait(random.uniform(1.5, 3.0))
         except Exception as e:
             logger(f"[{username}] خطأ: {str(e)[:80]}")
             stop_event.wait(5)
