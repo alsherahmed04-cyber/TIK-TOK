@@ -111,61 +111,69 @@ def create_order(token, csrf, service_type, target, amount, avatar="", extra=Non
     return False, data.get("errors", [{}])[0].get("message", "خطأ غير معروف")
 
 def farmer(username, token, csrf, stop_event, logger, proxy=None, score_callback=None):
-    """تجميع — يستخدم initialNumber عشوائي كبير (زي الكود الأصلي)"""
     logger(f"[~] {username}: بدء التجميع")
-    s = fetch_score(token, csrf, proxy)
+    s = fetch_score(token, csrf, proxy, username=username)
     if s is not None and score_callback: score_callback(s)
-    err_count = 0
+    skip_until = 0
     last_status = time.time()
     stop_event.wait(random.uniform(0.5, 3.0))
     while not stop_event.is_set():
         try:
+            now = time.time()
+            if now < skip_until:
+                stop_event.wait(skip_until - now)
+                continue
             q = {"operationName": "GetOrders", "variables": {}, "query": "query GetOrders { getOrders { _id status } }"}
             _, data = graphql(q, "GetOrders", True, token, csrf, proxy, username=username)
             if "errors" in data:
-                err_count += 1
-                if err_count <= 3:
-                    logger(f"[{username}] GetOrders: {data.get('errors',[{}])[0].get('message','?')[:60]}")
-                stop_event.wait(random.uniform(4, 8))
+                err = data.get("errors",[{}])[0].get("message","")[:60]
+                logger(f"[{username}] GetOrders: {err}")
+                stop_event.wait(random.uniform(5, 10))
                 continue
-            err_count = 0
             orders = data.get("data", {}).get("getOrders", []) or []
             pending = [o for o in orders if o.get("status") == "pending"]
-            now = time.time()
-            if now - last_status > 60:
-                logger(f"[{username}] {len(orders)} أوامر, {len(pending)} معلقة")
-                last_status = now
+            if time.time() - last_status > 90:
+                logger(f"[{username}] {len(orders)} أوامر، {len(pending)} معلقة")
+                last_status = time.time()
             if not pending:
-                stop_event.wait(random.uniform(2, 5))
+                stop_event.wait(random.uniform(3, 6))
                 continue
-            for order in pending:
-                if stop_event.is_set(): break
-                # ✅ القيم الصحيحة: رقم عشوائي كبير + 1
-                rnd = random.randint(3000, 4500)
-                q = {"operationName": "ActionOrder",
-                    "variables": {"orderId": order["_id"],
-                        "validationData": {"attempts": 1,
-                            "initialNumber": float(rnd),
-                            "timeSpent": float(random.randint(4000, 7000)),
-                            "actualCount": float(rnd + 1),
-                            "source": "CLIENT_CRONET"}},
-                    "query": "mutation ActionOrder($orderId: ID!, $validationData: ValidationDataInput!) { actionOrder(orderId: $orderId, validationData: $validationData) { score taskProgress { count startTime taskProgressLimit } } }"}
-                _, result = graphql(q, "ActionOrder", True, token, csrf, proxy, username=username)
-                if "errors" not in result:
-                    score = fetch_score(token, csrf, proxy, username)
-                    if score is not None:
-                        logger(f"[{username}] ✓ الرصيد: {score}")
-                        if score_callback: score_callback(score)
+            # خد أول أمر واشتغل عليه
+            order = pending[0]
+            rnd = random.randint(3000, 4500)
+            q = {"operationName": "ActionOrder",
+                "variables": {"orderId": order["_id"],
+                    "validationData": {"attempts": 1,
+                        "initialNumber": float(rnd),
+                        "timeSpent": float(random.randint(4000, 7000)),
+                        "actualCount": float(rnd + 1),
+                        "source": "CLIENT_CRONET"}},
+                "query": "mutation ActionOrder($orderId: ID!, $validationData: ValidationDataInput!) { actionOrder(orderId: $orderId, validationData: $validationData) { score } }"}
+            _, result = graphql(q, "ActionOrder", True, token, csrf, proxy, username=username)
+            if "errors" not in result:
+                score = fetch_score(token, csrf, proxy, username)
+                if score is not None:
+                    logger(f"[{username}] ✓ الرصيد: {score}")
+                    if score_callback: score_callback(score)
+                stop_event.wait(random.uniform(2, 4))
+            else:
+                err = result.get("errors",[{}])[0].get("message","?")
+                if "Rate limit" in err or "Too many requests" in err:
+                    logger(f"[{username}] ⏳ انتظار 10ث (Rate limit)")
+                    stop_event.wait(10)
+                elif "TASK_ALREADY_SUBMITTED" in err:
+                    logger(f"[{username}] ⏭ مهمة مكررة - تخطي")
+                    stop_event.wait(3)
+                elif "TASK_TOO_FAST" in err:
+                    logger(f"[{username}] ⏳ بسرعة زيادة - انتظار 8ث")
+                    stop_event.wait(8)
+                elif "INVALID_VALIDATION" in err:
+                    stop_event.wait(random.uniform(2, 4))
+                elif "TASK_UNAVAILABLE" in err:
+                    stop_event.wait(5)
                 else:
-                    err = result.get("errors",[{}])[0].get("message","?")
-                    if "Rate limit" in err:
-                        logger(f"[{username}] ⏳ Rate limit")
-                        stop_event.wait(3)
-                    elif "TASK_UNAVAILABLE" in err:
-                        pass
-                    else:
-                        logger(f"[{username}] ActionOrder: {err[:80]}")
-                stop_event.wait(random.uniform(1.5, 3.0))
+                    logger(f"[{username}] {err[:70]}")
+                    stop_event.wait(5)
         except Exception as e:
             logger(f"[{username}] خطأ: {str(e)[:80]}")
             stop_event.wait(5)
