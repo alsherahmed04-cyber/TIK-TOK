@@ -120,8 +120,8 @@ class Manager:
         if u in self.threads:
             ev, th, st = self.threads[u]
             if th.is_alive():
-                return "شغال", int(time.time() - st)
-        return self.status.get(u, "متوقف"), 0
+                return "شغال", int(time.time() - st), st
+        return self.status.get(u, "متوقف"), 0, 0
 
 manager = Manager()
 
@@ -138,22 +138,38 @@ def api_data():
     with manager.log_lock: logs = list(manager.logs[-300:])
     accounts = d.get("accounts", [])
     # ترتيب: الشغال الأول
-    sorted_accs = []
     running_first = []
     stopped = []
     for a in accounts:
-        st, _ = manager.status_one(a["username"])
+        st, elapsed, st_time = manager.status_one(a["username"])
         a["_status"] = st
+        a["_elapsed"] = elapsed
+        a["_start_time"] = st_time
         if st == "شغال":
             running_first.append(a)
         else:
             stopped.append(a)
     sorted_accs = running_first + stopped
+    # معلومات الجلسة الحالية (أول حساب شغال)
+    session_info = None
+    if running_first:
+        top = running_first[0]
+        session_len = 600  # 10 دقايق
+        elapsed = top["_elapsed"]
+        remaining = max(0, session_len - (elapsed % session_len))
+        session_info = {
+            "account": top["username"],
+            "elapsed": elapsed,
+            "remaining": remaining,
+            "session_length": session_len,
+            "progress": int((elapsed % session_len) / session_len * 100),
+        }
     return jsonify({
         "accounts": sorted_accs,
         "scores": manager.scores,
         "status": manager.status,
         "logs": logs,
+        "session": session_info,
     })
 
 @app.route("/api/start-one", methods=["POST"])
