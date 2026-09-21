@@ -48,7 +48,7 @@ class Manager:
             self.status[u] = "فشل الدخول"
             self.log(f"[X] {u}: فشل الدخول")
             return
-        B.attest(t, c, px)
+        B.attest(t, c, px, u)
         self.set_score(u, user.get("score", 0))
         self.status[u] = "شغال"
         self.log(f"[OK] {u} متصل")
