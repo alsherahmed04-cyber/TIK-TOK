@@ -111,10 +111,10 @@ def create_order(token, csrf, service_type, target, amount, avatar="", extra=Non
     return False, data.get("errors", [{}])[0].get("message", "خطأ غير معروف")
 
 def farmer(username, token, csrf, stop_event, logger, proxy=None, score_callback=None):
+    """تجميع — يستخدم initialNumber عشوائي كبير (زي الكود الأصلي)"""
     logger(f"[~] {username}: بدء التجميع")
-    s = fetch_score(token, csrf, proxy, username=username)
+    s = fetch_score(token, csrf, proxy)
     if s is not None and score_callback: score_callback(s)
-    baseline = s if s is not None else 0
     err_count = 0
     last_status = time.time()
     stop_event.wait(random.uniform(0.5, 3.0))
@@ -140,32 +140,32 @@ def farmer(username, token, csrf, stop_event, logger, proxy=None, score_callback
                 continue
             for order in pending:
                 if stop_event.is_set(): break
-                # نجلب الرصيد الحالي ليكون baseline صحيح
-                cur = fetch_score(token, csrf, proxy, username=username)
-                if cur is not None:
-                    baseline = cur
-                    if score_callback: score_callback(cur)
-                step = random.randint(3000, 4500)
+                # ✅ القيم الصحيحة: رقم عشوائي كبير + 1
+                rnd = random.randint(3000, 4500)
                 q = {"operationName": "ActionOrder",
                     "variables": {"orderId": order["_id"],
                         "validationData": {"attempts": 1,
-                            "initialNumber": float(baseline),
+                            "initialNumber": float(rnd),
                             "timeSpent": float(random.randint(4000, 7000)),
-                            "actualCount": float(baseline + step),
+                            "actualCount": float(rnd + 1),
                             "source": "CLIENT_CRONET"}},
-                    "query": "mutation ActionOrder($orderId: ID!, $validationData: ValidationDataInput!) { actionOrder(orderId: $orderId, validationData: $validationData) { score } }"}
+                    "query": "mutation ActionOrder($orderId: ID!, $validationData: ValidationDataInput!) { actionOrder(orderId: $orderId, validationData: $validationData) { score taskProgress { count startTime taskProgressLimit } } }"}
                 _, result = graphql(q, "ActionOrder", True, token, csrf, proxy, username=username)
                 if "errors" not in result:
-                    new_score = result.get("data",{}).get("actionOrder",{}).get("score")
-                    if new_score is not None:
-                        baseline = new_score
-                        logger(f"[{username}] ✓ الرصيد: {new_score}")
-                        if score_callback: score_callback(new_score)
+                    score = fetch_score(token, csrf, proxy, username)
+                    if score is not None:
+                        logger(f"[{username}] ✓ الرصيد: {score}")
+                        if score_callback: score_callback(score)
                 else:
                     err = result.get("errors",[{}])[0].get("message","?")
-                    if "INVALID_VALIDATION" not in err:
-                        logger(f"[{username}] ActionOrder: {err[:60]}")
-                stop_event.wait(random.uniform(1.0, 2.5))
+                    if "Rate limit" in err:
+                        logger(f"[{username}] ⏳ Rate limit")
+                        stop_event.wait(3)
+                    elif "TASK_UNAVAILABLE" in err:
+                        pass
+                    else:
+                        logger(f"[{username}] ActionOrder: {err[:80]}")
+                stop_event.wait(random.uniform(1.5, 3.0))
         except Exception as e:
             logger(f"[{username}] خطأ: {str(e)[:80]}")
             stop_event.wait(5)
