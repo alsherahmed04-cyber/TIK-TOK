@@ -1,7 +1,7 @@
 {
   "accounts": [
-    {"username": "pubgskin", "password": "d02d5189", "proxy": "https://102.217.69.75:10443"},
-    {"username": "pubgskin1", "password": "d02d5189", "proxy": "http://15.224.107.208:47979"},
-    {"username": "pubgskin2", "password": "d02d5189", "proxy": "http://144.124.251.24:10154"}
+    {"username": "pubgskin", "password": "d02d5189", "proxy": ""},
+    {"username": "pubgskin1", "password": "d02d5189", "proxy": "https://102.217.69.75:10443"},
+    {"username": "pubgskin2", "password": "d02d5189", "proxy": "socks4://150.109.247.86:8443"}
   ]
 }
