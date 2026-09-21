@@ -1,4 +1,4 @@
-import requests, hmac, hashlib, time, uuid, json, random, re
+import requests, hmac, hashlib, time, uuid, json, random, re, os
 
 DEVINFO = '{"d":"61393235613366373261636533656632","n":"494e46494e495820496e66696e6978205836383733","o":"16","t":"d","v":"2.2.9","s":"0,0"}'
 KEY = bytes([b ^ 0x43 for b in [0x35,0x30,0x1c,0x2f,0x2c,0x2c,0x28,0x31,0x35,0x30,0x1c,0x2f,0x2c,0x2c,0x28,0x31]])
@@ -10,6 +10,7 @@ OP_IDS = {
     "GetUsers": "41454e2194d7c30f1c6e11c2c246bcc0377da65a8bf06276ca5ea9ec9ff538b6"
 }
 URL = "https://api.tikspark.xyz/graphql"
+PROXY_URL = os.getenv("PROXY_URL", "")
 
 def signature(ts, nonce, payload):
     return hmac.new(KEY, f"{ts}-{nonce}-{payload}".encode(), hashlib.sha256).hexdigest()
@@ -33,12 +34,13 @@ def graphql(query, op, auth=True, token=None, csrf=None):
         headers["token"] = token
         headers["x-csrf-token"] = csrf
     try:
-        r = requests.post(URL, headers=headers, data=payload, timeout=15)
+        proxies = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
+        r = requests.post(URL, headers=headers, data=payload, timeout=20, proxies=proxies)
         return r, r.json()
     except Exception as e:
         return None, {"error": str(e)}
 
-def login(username, password, retries=3):
+def login(username, password, retries=5):
     q = {"operationName": "LoginAccount",
         "variables": {"data": {"id": "", "uniqueId": username, "nickname": "",
             "avatarMedium": "", "followerCount": 0, "followingCount": 0, "videoCount": 0,
@@ -53,7 +55,7 @@ def login(username, password, retries=3):
             return t, c, u
         err = data.get("errors", [{"message": "غير معروف"}])[0]["message"]
         if "Rate limit exceeded" in err:
-            wait = 3
+            wait = 5 + attempt * 3
             try:
                 m = re.search(r'wait (\d+) seconds?', err)
                 if m: wait = int(m.group(1)) + 1

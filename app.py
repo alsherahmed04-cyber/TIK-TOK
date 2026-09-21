@@ -1,4 +1,4 @@
-import os, json, threading
+import os, json, threading, time
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
@@ -70,8 +70,13 @@ class Manager:
         self.stop_event.clear()
         self.running = True
         self.log(f"[SYSTEM] تشغيل البوت ({len(accounts)} حساب)")
-        for acc in accounts:
-            threading.Thread(target=self.run_account, args=(acc, target, avatar, init), daemon=True).start()
+        # تشغيل متوازي مع تأخير بسيط بين الحسابات لتجنب Rate Limit
+        def start_one(idx, acc):
+            time.sleep(idx * 4)
+            if not self.stop_event.is_set():
+                self.run_account(acc, target, avatar, init)
+        for i, acc in enumerate(accounts):
+            threading.Thread(target=start_one, args=(i, acc), daemon=True).start()
         return True, "تم التشغيل"
     def stop(self):
         if not self.running: return False, "البوت مش شغال"
