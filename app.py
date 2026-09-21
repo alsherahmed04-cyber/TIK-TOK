@@ -1,8 +1,10 @@
 import os, json, threading
 from flask import Flask, request, jsonify
+from flask_cors import CORS
 import bot as B
 
 app = Flask(__name__)
+CORS(app, resources={r"\/*": {"origins": "*"}})
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Ahmed")
 ACC_FILE = "accounts.json"
 lock = threading.Lock()
