@@ -1,5 +1,8 @@
 {
   "accounts": [
-    {"username": "pubgskin", "password": "d02d5189", "proxy": ""}
-  ]
+    {"username": "pubgskin", "password": "d02d5189", "proxy": ""},
+    {"username": "pubgskin1", "password": "d02d5189", "proxy": ""},
+    {"username": "pubgskin2", "password": "d02d5189", "proxy": ""}
+  ],
+  "rotation_seconds": 600
 }

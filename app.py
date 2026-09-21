@@ -31,6 +31,10 @@ class Manager:
         self.log_lock = threading.Lock()
         self.scores = {}
         self.status = {}
+        self.rotate_idx = 0
+        self.current_stop = None
+        self.current_start = 0
+        self.scheduler_thread = None
     def log(self, msg):
         with self.log_lock:
             self.logs.append(msg)
@@ -38,48 +42,67 @@ class Manager:
                 self.logs.pop(0)
     def set_score(self, user, score):
         self.scores[user] = score
-    def run_account(self, acc):
+    def run_account(self, acc, stop_ev):
         u = acc["username"]
         p = acc.get("password", "")
-        px = (acc.get("proxy") or "").strip() or None
         self.status[u] = "جاري الدخول"
-        t, c, user = B.login(u, p, px)
+        t, c, user = B.login(u, p)
         if not t:
             self.status[u] = "فشل الدخول"
             self.log(f"[X] {u}: فشل الدخول")
             return
-        B.attest(t, c, px, u)
+        B.attest(t, c, None, u)
         self.set_score(u, user.get("score", 0))
         self.status[u] = "شغال"
         self.log(f"[OK] {u} متصل")
-        B.farmer(u, t, c, self.stop_event, self.log, px, lambda s: self.set_score(u, s))
+        B.farmer(u, t, c, stop_ev, self.log, None, lambda s: self.set_score(u, s))
         self.status[u] = "متوقف"
-    def start_one(self, acc, delay=0):
-        if delay: time.sleep(delay)
-        if not self.stop_event.is_set():
-            self.run_account(acc)
+        self.log(f"[{u}] انتهت الجلسة")
+    def start_current(self):
+        data = load_data()
+        accounts = data.get("accounts", [])
+        if not accounts: return
+        self.rotate_idx = self.rotate_idx % len(accounts)
+        acc = accounts[self.rotate_idx]
+        self.current_stop = threading.Event()
+        self.current_start = time.time()
+        self.log(f"[SYSTEM] الحساب الحالي: {acc['username']} ({self.rotate_idx+1}/{len(accounts)})")
+        threading.Thread(target=self.run_account, args=(acc, self.current_stop), daemon=True).start()
+    def scheduler(self):
+        while self.running and not self.stop_event.is_set():
+            time.sleep(5)
+            if not self.running: break
+            data = load_data()
+            rotation = int(data.get("rotation_seconds", 600))
+            elapsed = time.time() - self.current_start
+            if elapsed >= rotation:
+                if self.current_stop:
+                    self.current_stop.set()
+                time.sleep(3)
+                self.rotate_idx += 1
+                if not self.stop_event.is_set():
+                    self.start_current()
     def start(self):
         if self.running:
             return False, "البوت شغال بالفعل"
         data = load_data()
-        accounts = data.get("accounts", [])
-        if not accounts:
+        if not data.get("accounts"):
             return False, "لا توجد حسابات"
         self.stop_event.clear()
         self.running = True
-        self.log(f"[SYSTEM] تشغيل ({len(accounts)} حساب)")
-        for i, acc in enumerate(accounts):
-            t = threading.Thread(target=self.start_one, args=(acc, i * 5), daemon=True)
-            t.start()
-        return True, "تم التشغيل"
+        self.rotate_idx = 0
+        self.start_current()
+        self.scheduler_thread = threading.Thread(target=self.scheduler, daemon=True)
+        self.scheduler_thread.start()
+        return True, "تم التشغيل (وضع التبديل)"
     def add_account_live(self, acc):
-        if self.running:
-            t = threading.Thread(target=self.start_one, args=(acc, 0), daemon=True)
-            t.start()
+        pass
     def stop(self):
         if not self.running:
             return False, "البوت مش شغال"
         self.stop_event.set()
+        if self.current_stop:
+            self.current_stop.set()
         self.running = False
         self.log("[SYSTEM] إيقاف")
         return True, "تم الإيقاف"
