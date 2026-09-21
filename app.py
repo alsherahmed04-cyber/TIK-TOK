@@ -1,8 +1,9 @@
-import os, json, threading, time, hashlib, uuid
+import os, json, threading, time, hashlib
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import bot as B
+import firebase_store as fs
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}},
@@ -10,49 +11,13 @@ CORS(app, resources={r"/*": {"origins": "*"}},
      methods=["GET", "POST", "OPTIONS"])
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Ahmed")
 
-USERS_FILE = "users.json"
-DATA_DIR = "data"
-os.makedirs(DATA_DIR, exist_ok=True)
-lock = threading.Lock()
-
-# ============ USERS ============
-def load_users():
-    with lock:
-        if not os.path.exists(USERS_FILE): return {}
-        try:
-            with open(USERS_FILE, encoding='utf-8') as f: return json.load(f)
-        except: return {}
-
-def save_users(u):
-    with lock:
-        with open(USERS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(u, f, ensure_ascii=False, indent=2)
-
+# ============ USERS (Firebase) ============
 def hash_pwd(p): return hashlib.sha256(p.encode()).hexdigest()
 
-def ufile(phone, kind): return os.path.join(DATA_DIR, f"{phone}_{kind}.json")
+def load_users(): return fs.load_users()
+def save_users(u): return fs.save_users(u)
 
-def uload(phone, kind, default):
-    p = ufile(phone, kind)
-    with lock:
-        if not os.path.exists(p): return default
-        try:
-            with open(p, encoding='utf-8') as f: return json.load(f)
-        except: return default
-
-def usave(phone, kind, d):
-    p = ufile(phone, kind)
-    with lock:
-        with open(p, 'w', encoding='utf-8') as f:
-            json.dump(d, f, ensure_ascii=False, indent=2)
-
-def get_phone():
-    return (request.headers.get("X-Phone") or "").strip()
-
-def auth_ok():
-    return get_phone() in load_users()
-
-# ============ MANAGERS (per user) ============
+# ============ MANAGERS ============
 class UserManager:
     def __init__(self, phone):
         self.phone = phone
@@ -66,7 +31,7 @@ class UserManager:
             self.logs.append({"t": datetime.now().strftime("%H:%M:%S"), "m": msg, "k": kind})
             if len(self.logs) > 1500: self.logs.pop(0)
     def set_score(self, u, s): self.scores[u] = s
-    def accs(self): return uload(self.phone, "accounts", {"accounts": []}).get("accounts", [])
+    def accs(self): return fs.load_accounts(self.phone).get("accounts", [])
     def run_account(self, acc, stop_ev):
         u = acc["username"]
         self.status[u] = "جاري الدخول"
@@ -85,16 +50,13 @@ class UserManager:
         B.farmer(u, t, c, stop_ev, lambda m: self.log(m, "ok"), None, scb)
         et = time.time(); es = session["s1"]
         collected = es - session["s0"]
-        h = uload(self.phone, "history", [])
-        h.append({
+        fs.append_history(self.phone, {
             "account": u,
             "start_time": datetime.fromtimestamp(session["t0"]).strftime("%Y-%m-%d %H:%M:%S"),
             "end_time": datetime.fromtimestamp(et).strftime("%Y-%m-%d %H:%M:%S"),
             "start_score": session["s0"], "end_score": es,
             "collected": collected, "duration_seconds": int(et - session["t0"]),
         })
-        if len(h) > 1000: h = h[-1000:]
-        usave(self.phone, "history", h)
         self.status[u] = "متوقف"
         self.log(f"[{u}] ⏹ انتهى ({collected:+d})", "info")
     def start_one(self, username):
@@ -130,7 +92,15 @@ def mgr():
     if p not in managers: managers[p] = UserManager(p)
     return managers[p]
 
-# ============ AUTH ROUTES ============
+def get_phone():
+    return (request.headers.get("X-Phone") or "").strip()
+
+def auth_ok():
+    phone = get_phone()
+    if not phone: return False
+    return phone in load_users()
+
+# ============ AUTH ============
 @app.route("/api/register", methods=["POST"])
 def api_register():
     d = request.json or {}
@@ -148,10 +118,9 @@ def api_register():
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
     save_users(users)
-    # إنشاء ملفات فارغة
-    usave(phone, "accounts", {"accounts": []})
-    usave(phone, "history", [])
-    usave(phone, "transactions", [])
+    fs.save_accounts(phone, {"accounts": []})
+    fs.save_history(phone, [])
+    fs.save_tx(phone, [])
     return jsonify({"ok": True, "msg": "✅ تم إنشاء الحساب"})
 
 @app.route("/api/login", methods=["POST"])
@@ -163,9 +132,8 @@ def api_login():
     users = load_users()
     if phone not in users:
         return jsonify({"ok": False, "msg": "الرقم غير مسجل"})
-    if users[phone]["password"] != hash_pwd(pwd):
+    if users[phone].get("password") != hash_pwd(pwd):
         return jsonify({"ok": False, "msg": "كلمة المرور غلط"})
-    # تحديث device_id لو جديد
     if dev and not users[phone].get("device_id"):
         users[phone]["device_id"] = dev
         save_users(users)
@@ -207,31 +175,11 @@ def api_forgot_reset():
 @app.route("/")
 def home(): return "<h1>MOON API Running</h1>"
 
-def fetch_my_orders(phone, username):
-    """جلب أوامر المستخدم من myOrders"""
-    try:
-        acc = next((a for a in uload(phone, "accounts", {"accounts": []}).get("accounts", []) if a["username"] == username), None)
-        if not acc: return []
-        t, c, user = B.login(username, acc["password"])
-        if not t: return []
-        q = {"operationName": None, "variables": {},
-             "query": "query { myOrders { _id type amount status score fulfilled createdAt videoLink tiktokerUsername } }"}
-        _, data = B.graphql(q, None, True, t, c, None, username=username)
-        if "errors" not in data:
-            return data.get("data", {}).get("myOrders", []) or []
-    except: pass
-    return []
-
-@app.route("/api/orders/<username>")
-def api_orders(username):
-    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
-    return jsonify({"orders": fetch_my_orders(get_phone(), username)})
-
 @app.route("/api/data")
 def api_data():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     m = mgr()
-    d = uload(m.phone, "accounts", {"accounts": []})
+    d = fs.load_accounts(m.phone)
     with m.log_lock: logs = list(m.logs[-250:])
     rf, st = [], []
     for a in d.get("accounts", []):
@@ -284,11 +232,11 @@ def api_add():
     p = (d.get("password") or "").strip()
     if not u or not p: return jsonify({"ok": False, "msg": "أدخل الاسم وكلمة المرور"})
     m = mgr()
-    data = uload(m.phone, "accounts", {"accounts": []})
+    data = fs.load_accounts(m.phone)
     if any(a["username"] == u for a in data["accounts"]):
         return jsonify({"ok": False, "msg": "موجود"})
     data["accounts"].append({"username": u, "password": p})
-    usave(m.phone, "accounts", data)
+    fs.save_accounts(m.phone, data)
     return jsonify({"ok": True, "msg": f"تم إضافة {u}"})
 
 @app.route("/api/delete", methods=["POST"])
@@ -298,34 +246,34 @@ def api_delete():
     u = (d.get("username") or "").strip()
     m = mgr()
     m.stop_one(u)
-    data = uload(m.phone, "accounts", {"accounts": []})
+    data = fs.load_accounts(m.phone)
     data["accounts"] = [a for a in data["accounts"] if a["username"] != u]
-    usave(m.phone, "accounts", data)
+    fs.save_accounts(m.phone, data)
     m.scores.pop(u, None); m.status.pop(u, None)
     return jsonify({"ok": True, "msg": f"تم حذف {u}"})
 
 @app.route("/api/history")
 def api_history():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
-    h = uload(get_phone(), "history", [])
+    h = fs.load_history(get_phone())
     return jsonify({"history": list(reversed(h[-200:]))})
 
 @app.route("/api/history/clear", methods=["POST"])
 def api_history_clear():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
-    usave(get_phone(), "history", [])
+    fs.save_history(get_phone(), [])
     return jsonify({"ok": True})
 
 @app.route("/api/transactions")
 def api_tx():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
-    t = uload(get_phone(), "transactions", [])
+    t = fs.load_tx(get_phone())
     return jsonify({"transactions": list(reversed(t[-200:]))})
 
 @app.route("/api/transactions/clear", methods=["POST"])
 def api_tx_clear():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
-    usave(get_phone(), "transactions", [])
+    fs.save_tx(get_phone(), [])
     return jsonify({"ok": True})
 
 @app.route("/api/buy", methods=["POST"])
@@ -338,29 +286,16 @@ def api_buy():
     amount = int(d.get("amount", 0) or 0)
     if not acc_name or not service or not target or amount <= 0:
         return jsonify({"ok": False, "msg": "أدخل كل البيانات"})
-    # الحدود الدنيا
     mins = {"followers": 20, "likes": 20, "views": 100, "shares": 100, "comments": 20, "save": 100}
     if amount < mins.get(service, 1):
-        return jsonify({"ok": False, "msg": f"الحد الأدنى لـ {service} هو {mins.get(service)}"})
+        return jsonify({"ok": False, "msg": f"الحد الأدنى {mins.get(service)}"})
     m = mgr()
     acc = next((a for a in m.accs() if a["username"] == acc_name), None)
     if not acc: return jsonify({"ok": False, "msg": "الحساب غير موجود"})
     t, c, user = B.login(acc_name, acc["password"])
     if not t: return jsonify({"ok": False, "msg": "فشل الدخول"})
     B.attest(t, c, None, acc_name)
-    # نجيب avatar للمتابعين
     avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
-    if service in ("followers",):
-        # نجرب نجيب avatar من الحساب المستهدف
-        try:
-            q_av = {"operationName": "GetUsers", "variables": {},
-                "query": "query GetUsers { getUsers(username: \"" + target + "\") { avatar } }"}
-            _, dav = B.graphql(q_av, "GetUsers", True, t, c, None, username=acc_name)
-            if "errors" not in dav:
-                users = dav.get("data", {}).get("getUsers", [])
-                if users and users[0].get("avatar"):
-                    avatar = users[0]["avatar"]
-        except: pass
     before = user.get("score", 0) or 0
     ok, result = B.create_order(t, c, service, target, amount, avatar, None, None, acc_name)
     entry = {
@@ -369,20 +304,15 @@ def api_buy():
         "before": before, "after": before, "cost": 0,
         "ok": bool(ok), "msg": result if not ok else "تم"
     }
-    tx = uload(m.phone, "transactions", [])
     if ok:
         ns = B.fetch_score(t, c, None, acc_name)
         if ns is not None:
             m.set_score(acc_name, ns)
             entry["after"] = ns
             entry["cost"] = before - ns
-        tx.append(entry)
-        if len(tx) > 1000: tx = tx[-1000:]
-        usave(m.phone, "transactions", tx)
+        fs.append_tx(m.phone, entry)
         return jsonify({"ok": True, "msg": "✅ تم الشراء!", "tx": entry})
-    tx.append(entry)
-    if len(tx) > 1000: tx = tx[-1000:]
-    usave(m.phone, "transactions", tx)
+    fs.append_tx(m.phone, entry)
     return jsonify({"ok": False, "msg": f"❌ {result}", "tx": entry})
 
 if __name__ == "__main__":
