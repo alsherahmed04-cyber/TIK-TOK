@@ -1,15 +1,12 @@
 import os, json, threading, time
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import bot as B
 
 app = Flask(__name__)
-
-# CORS: اسمح لأي origin مع الهيدرز المطلوبة
 CORS(app, resources={r"/*": {"origins": "*"}},
      allow_headers=["Content-Type", "X-Password"],
-     methods=["GET", "POST", "OPTIONS"],
-     supports_credentials=False)
-
+     methods=["GET", "POST", "OPTIONS"])
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Ahmed")
 ACC_FILE = "accounts.json"
 lock = threading.Lock()
@@ -17,7 +14,7 @@ lock = threading.Lock()
 def load_data():
     with lock:
         if not os.path.exists(ACC_FILE):
-            return {"accounts": [], "target_user": ""}
+            return {"accounts": []}
         with open(ACC_FILE, encoding='utf-8') as f:
             return json.load(f)
 
@@ -37,52 +34,53 @@ class Manager:
     def log(self, msg):
         with self.log_lock:
             self.logs.append(msg)
-            if len(self.logs) > 2000: self.logs.pop(0)
-    def run_account(self, acc, target, avatar, init_count):
-        import bot as B
+            if len(self.logs) > 2000:
+                self.logs.pop(0)
+    def set_score(self, user, score):
+        self.scores[user] = score
+    def run_account(self, acc):
         u = acc["username"]
+        p = acc.get("password", "")
         self.status[u] = "جاري الدخول"
-        t, c, user = B.login(u, acc["password"])
+        t, c, user = B.login(u, p)
         if not t:
             self.status[u] = "فشل الدخول"
             self.log(f"[X] {u}: فشل الدخول")
             return
         B.attest(t, c)
-        self.scores[u] = user.get("score", 0)
+        self.set_score(u, user.get("score", 0))
         self.status[u] = "شغال"
-        B.farmer(u, t, c, target, avatar, init_count, self.stop_event, self.log)
+        self.log(f"[OK] {u} متصل")
+        B.farmer(u, t, c, self.stop_event, self.log, lambda s: self.set_score(u, s))
         self.status[u] = "متوقف"
+    def start_one(self, acc, delay=0):
+        if delay: time.sleep(delay)
+        if not self.stop_event.is_set():
+            self.run_account(acc)
     def start(self):
-        import bot as B
-        if self.running: return False, "البوت شغال بالفعل"
+        if self.running:
+            return False, "البوت شغال بالفعل"
         data = load_data()
         accounts = data.get("accounts", [])
-        target = data.get("target_user", "")
-        if not accounts: return False, "لا توجد حسابات"
-        if not target: return False, "حدد الحساب المستهدف"
-        tacc = next((a for a in accounts if a["username"] == target), None)
-        if not tacc: return False, "الهدف غير موجود"
-        t_tok, t_csrf, _ = B.login(target, tacc["password"])
-        if not t_tok: return False, "فشل الدخول للحساب المستهدف"
-        me = B.fetch_user_data(t_tok, t_csrf)
-        avatar = me.get("avatar", "") or "https://p16-common-sign.tiktokcdn-eu.com/tos-alisg-avt-0068/0cd6feb16816a94d33aec63be51033f2~tplv-tiktokx-cropcenter:720:720.jpeg"
-        init = me.get("followerCount", 0) or 0
+        if not accounts:
+            return False, "لا توجد حسابات"
         self.stop_event.clear()
         self.running = True
-        self.log(f"[SYSTEM] تشغيل البوت ({len(accounts)} حساب)")
-        # تشغيل متوازي مع تأخير بسيط بين الحسابات لتجنب Rate Limit
-        def start_one(idx, acc):
-            time.sleep(idx * 4)
-            if not self.stop_event.is_set():
-                self.run_account(acc, target, avatar, init)
+        self.log(f"[SYSTEM] تشغيل ({len(accounts)} حساب)")
         for i, acc in enumerate(accounts):
-            threading.Thread(target=start_one, args=(i, acc), daemon=True).start()
+            t = threading.Thread(target=self.start_one, args=(acc, i * 5), daemon=True)
+            t.start()
         return True, "تم التشغيل"
+    def add_account_live(self, acc):
+        if self.running:
+            t = threading.Thread(target=self.start_one, args=(acc, 0), daemon=True)
+            t.start()
     def stop(self):
-        if not self.running: return False, "البوت مش شغال"
+        if not self.running:
+            return False, "البوت مش شغال"
         self.stop_event.set()
         self.running = False
-        self.log("[SYSTEM] إيقاف البوت")
+        self.log("[SYSTEM] إيقاف")
         return True, "تم الإيقاف"
 
 manager = Manager()
@@ -91,15 +89,22 @@ def auth_ok():
     return request.headers.get("X-Password") == ADMIN_PASSWORD
 
 @app.route("/")
-def home(): return "<h1>MOON API Running</h1>"
+def home():
+    return "<h1>MOON API Running</h1>"
 
 @app.route("/api/data")
 def api_data():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     d = load_data()
-    with manager.log_lock: logs = list(manager.logs[-200:])
-    return jsonify({"accounts": d.get("accounts", []), "target_user": d.get("target_user", ""),
-        "running": manager.running, "scores": manager.scores, "status": manager.status, "logs": logs})
+    with manager.log_lock:
+        logs = list(manager.logs[-200:])
+    return jsonify({
+        "accounts": d.get("accounts", []),
+        "running": manager.running,
+        "scores": manager.scores,
+        "status": manager.status,
+        "logs": logs
+    })
 
 @app.route("/api/start", methods=["POST"])
 def api_start():
@@ -116,8 +121,9 @@ def api_stop():
 @app.route("/api/clear", methods=["POST"])
 def api_clear():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
-    with manager.log_lock: manager.logs.clear()
-    return jsonify({"ok": True, "msg": "تم المسح"})
+    with manager.log_lock:
+        manager.logs.clear()
+    return jsonify({"ok": True, "msg": "تم مسح السجل"})
 
 @app.route("/api/add", methods=["POST"])
 def api_add():
@@ -125,12 +131,16 @@ def api_add():
     d = request.json or {}
     u = (d.get("username") or "").strip()
     p = (d.get("password") or "").strip()
-    if not u or not p: return jsonify({"ok": False, "msg": "أدخل الاسم وكلمة المرور"})
+    if not u or not p:
+        return jsonify({"ok": False, "msg": "أدخل الاسم وكلمة المرور"})
     data = load_data()
     if any(a["username"] == u for a in data["accounts"]):
         return jsonify({"ok": False, "msg": "الحساب موجود"})
-    data["accounts"].append({"username": u, "password": p})
+    new_acc = {"username": u, "password": p}
+    data["accounts"].append(new_acc)
     save_data(data)
+    if manager.running:
+        manager.add_account_live(new_acc)
     return jsonify({"ok": True, "msg": f"تم إضافة {u}"})
 
 @app.route("/api/delete", methods=["POST"])
@@ -140,22 +150,11 @@ def api_delete():
     u = (d.get("username") or "").strip()
     data = load_data()
     data["accounts"] = [a for a in data["accounts"] if a["username"] != u]
-    if data.get("target_user") == u: data["target_user"] = ""
     save_data(data)
+    manager.scores.pop(u, None)
+    manager.status.pop(u, None)
     return jsonify({"ok": True, "msg": f"تم حذف {u}"})
-
-@app.route("/api/target", methods=["POST"])
-def api_target():
-    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
-    d = request.json or {}
-    u = (d.get("username") or "").strip()
-    data = load_data()
-    if not any(a["username"] == u for a in data["accounts"]):
-        return jsonify({"ok": False, "msg": "الحساب غير موجود"})
-    data["target_user"] = u
-    save_data(data)
-    return jsonify({"ok": True, "msg": f"الهدف: {u}"})
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, threaded=True)
