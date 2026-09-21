@@ -87,27 +87,26 @@ def fetch_score(token, csrf, proxy=None, username=None):
     _, data = graphql(q, "FetchScore", True, token, csrf, proxy, username=username)
     return data.get("data", {}).get("fetchScore") if "errors" not in data else None
 
-def create_order(token, csrf, service_type, target, amount, extra=None, proxy=None, username=None):
-    """إنشاء طلب شراء خدمة (يدوي)"""
+def create_order(token, csrf, service_type, target, amount, avatar="", extra=None, proxy=None, username=None):
+    """إنشاء طلب شراء خدمة (الصيغة المؤكدة)"""
     variables = {
         "type": service_type,
         "amount": int(amount),
+        "avatar": avatar or "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
     }
-    if service_type in ("followers", "comments"):
+    if service_type == "followers":
         variables["tiktokerUsername"] = target
     else:
         variables["videoLink"] = target
     q = {
         "operationName": "CreateOrder",
         "variables": variables,
-        "query": "mutation CreateOrder($type: Action!, $amount: Int!, $tiktokerUsername: String, $videoLink: String, $avatar: String, $initialCount: Int) { createOrder(orderInput: { type: $type amount: $amount tiktokerUsername: $tiktokerUsername videoLink: $videoLink avatar: $avatar initialCount: $initialCount } ) { _id type videoLink tiktokerUsername amount status createdAt } }"
+        "query": "mutation CreateOrder($orderInput: OrderInput!) { createOrder(orderInput: $orderInput) { _id type amount status score createdAt } }"
     }
-    _, data = graphql(q, "CreateOrder", True, token, csrf, proxy, username=username)
+    _, data = graphql(q, None, True, token, csrf, proxy, username=username)
     if "errors" not in data:
-        order = data.get("data", {}).get("createOrder", {})
-        return True, order
-    err = data.get("errors", [{}])[0].get("message", "خطأ غير معروف")
-    return False, err
+        return True, data.get("data", {}).get("createOrder", {})
+    return False, data.get("errors", [{}])[0].get("message", "خطأ غير معروف")
 
 def farmer(username, token, csrf, stop_event, logger, proxy=None, score_callback=None):
     logger(f"[~] {username}: بدء التجميع")
