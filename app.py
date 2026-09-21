@@ -297,7 +297,7 @@ def api_buy():
     B.attest(t, c)
     avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
     before = user.get("score", 0) or 0
-    ok, result = B.create_order(t, c, service, target, amount, avatar, None, None, acc_name)
+    ok, result = B.create_order(t, c, service, target, amount, avatar, None)
     entry = {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "account": acc_name, "service": service, "target": target, "amount": amount,
