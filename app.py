@@ -1,4 +1,5 @@
 import os, json, threading, time
+from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import bot as B
@@ -9,7 +10,30 @@ CORS(app, resources={r"/*": {"origins": "*"}},
      methods=["GET", "POST", "OPTIONS"])
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Ahmed")
 ACC_FILE = "accounts.json"
+HIST_FILE = "history.json"
 lock = threading.Lock()
+
+def load_history():
+    with lock:
+        if not os.path.exists(HIST_FILE):
+            return []
+        try:
+            with open(HIST_FILE, encoding='utf-8') as f:
+                return json.load(f)
+        except:
+            return []
+
+def save_history(h):
+    with lock:
+        with open(HIST_FILE, 'w', encoding='utf-8') as f:
+            json.dump(h, f, ensure_ascii=False, indent=2)
+
+def append_history(entry):
+    h = load_history()
+    h.append(entry)
+    if len(h) > 1000:
+        h = h[-1000:]
+    save_history(h)
 
 def load_data():
     with lock:
@@ -58,11 +82,30 @@ class Manager:
             self.log(f"[X] {u}: فشل الدخول")
             return
         B.attest(t, c, None, u)
-        self.set_score(u, user.get("score", 0))
+        start_score = user.get("score", 0) or 0
+        self.set_score(u, start_score)
         self.status[u] = "شغال"
-        self.log(f"[OK] {u} متصل")
-        B.farmer(u, t, c, stop_ev, self.log, None, lambda s: self.set_score(u, s))
+        self.log(f"[OK] {u} متصل (رصيد البداية: {start_score})")
+        session = {"start_time": time.time(), "start_score": start_score, "end_score": start_score}
+        def score_cb(s):
+            self.set_score(u, s)
+            session["end_score"] = s
+        B.farmer(u, t, c, stop_ev, self.log, None, score_cb)
+        end_time = time.time()
+        end_score = session.get("end_score", start_score)
+        collected = end_score - start_score
+        entry = {
+            "account": u,
+            "start_time": datetime.fromtimestamp(session["start_time"]).strftime("%Y-%m-%d %H:%M:%S"),
+            "end_time": datetime.fromtimestamp(end_time).strftime("%Y-%m-%d %H:%M:%S"),
+            "start_score": start_score,
+            "end_score": end_score,
+            "collected": collected,
+            "duration_seconds": int(end_time - session["start_time"]),
+        }
+        append_history(entry)
         self.status[u] = "متوقف"
+        self.log(f"[{u}] انتهت - جمع: {collected} نقطة (من {start_score} لـ {end_score})")
 
     def start_current(self):
         data = load_data()
@@ -219,6 +262,18 @@ def api_rotation():
     data["rotation_seconds"] = secs
     save_data(data)
     return jsonify({"ok": True, "msg": f"مدة الدوران: {secs} ثانية"})
+
+@app.route("/api/history")
+def api_history():
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
+    h = load_history()
+    return jsonify({"history": list(reversed(h[-200:]))})
+
+@app.route("/api/history/clear", methods=["POST"])
+def api_history_clear():
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
+    save_history([])
+    return jsonify({"ok": True, "msg": "تم مسح السجل التاريخي"})
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
