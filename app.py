@@ -40,7 +40,7 @@ class UserManager:
         if not t:
             self.status[u] = "فشل الدخول"
             self.log(f"[{u}] ❌ فشل", "err"); return
-        B.attest(t, c, None, u)
+        B.attest(t, c)
         start_score = user.get("score", 0) or 0
         self.set_score(u, start_score)
         self.status[u] = "شغال"
@@ -294,7 +294,7 @@ def api_buy():
     if not acc: return jsonify({"ok": False, "msg": "الحساب غير موجود"})
     t, c, user = B.login(acc_name, acc["password"])
     if not t: return jsonify({"ok": False, "msg": "فشل الدخول"})
-    B.attest(t, c, None, acc_name)
+    B.attest(t, c)
     avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
     before = user.get("score", 0) or 0
     ok, result = B.create_order(t, c, service, target, amount, avatar, None, None, acc_name)
