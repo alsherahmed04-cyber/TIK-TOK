@@ -305,7 +305,7 @@ def api_buy():
         "ok": bool(ok), "msg": result if not ok else "تم"
     }
     if ok:
-        ns = B.fetch_score(t, c, None, acc_name)
+        ns = B.fetch_score(t, c)
         if ns is not None:
             m.set_score(acc_name, ns)
             entry["after"] = ns
