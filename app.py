@@ -14,9 +14,11 @@ lock = threading.Lock()
 def load_data():
     with lock:
         if not os.path.exists(ACC_FILE):
-            return {"accounts": []}
+            return {"accounts": [], "rotation_seconds": 600}
         with open(ACC_FILE, encoding='utf-8') as f:
-            return json.load(f)
+            d = json.load(f)
+            d.setdefault("rotation_seconds", 600)
+            return d
 
 def save_data(d):
     with lock:
@@ -34,14 +36,18 @@ class Manager:
         self.rotate_idx = 0
         self.current_stop = None
         self.current_start = 0
+        self.current_account = None
         self.scheduler_thread = None
+
     def log(self, msg):
         with self.log_lock:
             self.logs.append(msg)
             if len(self.logs) > 2000:
                 self.logs.pop(0)
+
     def set_score(self, user, score):
         self.scores[user] = score
+
     def run_account(self, acc, stop_ev):
         u = acc["username"]
         p = acc.get("password", "")
@@ -57,21 +63,26 @@ class Manager:
         self.log(f"[OK] {u} متصل")
         B.farmer(u, t, c, stop_ev, self.log, None, lambda s: self.set_score(u, s))
         self.status[u] = "متوقف"
-        self.log(f"[{u}] انتهت الجلسة")
+
     def start_current(self):
         data = load_data()
         accounts = data.get("accounts", [])
-        if not accounts: return
+        if not accounts:
+            self.log("[SYSTEM] لا توجد حسابات")
+            return
         self.rotate_idx = self.rotate_idx % len(accounts)
         acc = accounts[self.rotate_idx]
         self.current_stop = threading.Event()
         self.current_start = time.time()
-        self.log(f"[SYSTEM] الحساب الحالي: {acc['username']} ({self.rotate_idx+1}/{len(accounts)})")
+        self.current_account = acc["username"]
+        self.log(f"[SYSTEM] ▶ الحساب الحالي: {acc['username']} ({self.rotate_idx+1}/{len(accounts)})")
         threading.Thread(target=self.run_account, args=(acc, self.current_stop), daemon=True).start()
+
     def scheduler(self):
         while self.running and not self.stop_event.is_set():
-            time.sleep(5)
-            if not self.running: break
+            time.sleep(2)
+            if not self.running:
+                break
             data = load_data()
             rotation = int(data.get("rotation_seconds", 600))
             elapsed = time.time() - self.current_start
@@ -79,9 +90,11 @@ class Manager:
                 if self.current_stop:
                     self.current_stop.set()
                 time.sleep(3)
+                if self.stop_event.is_set():
+                    break
                 self.rotate_idx += 1
-                if not self.stop_event.is_set():
-                    self.start_current()
+                self.start_current()
+
     def start(self):
         if self.running:
             return False, "البوت شغال بالفعل"
@@ -94,9 +107,8 @@ class Manager:
         self.start_current()
         self.scheduler_thread = threading.Thread(target=self.scheduler, daemon=True)
         self.scheduler_thread.start()
-        return True, "تم التشغيل (وضع التبديل)"
-    def add_account_live(self, acc):
-        pass
+        return True, "تم التشغيل"
+
     def stop(self):
         if not self.running:
             return False, "البوت مش شغال"
@@ -104,7 +116,8 @@ class Manager:
         if self.current_stop:
             self.current_stop.set()
         self.running = False
-        self.log("[SYSTEM] إيقاف")
+        self.current_account = None
+        self.log("[SYSTEM] ⏹ إيقاف")
         return True, "تم الإيقاف"
 
 manager = Manager()
@@ -118,16 +131,33 @@ def home():
 
 @app.route("/api/data")
 def api_data():
-    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
+    if not auth_ok():
+        return jsonify({"error": "unauthorized"}), 401
     d = load_data()
     with manager.log_lock:
         logs = list(manager.logs[-200:])
+    accounts = d.get("accounts", [])
+    rotation = int(d.get("rotation_seconds", 600))
+    current_acc = None
+    seconds_remaining = 0
+    progress = 0
+    if manager.running and accounts:
+        idx = manager.rotate_idx % len(accounts)
+        current_acc = accounts[idx]["username"]
+        elapsed = time.time() - manager.current_start
+        seconds_remaining = max(0, int(rotation - elapsed))
+        progress = min(100, int((elapsed / rotation) * 100))
     return jsonify({
-        "accounts": d.get("accounts", []),
+        "accounts": accounts,
         "running": manager.running,
         "scores": manager.scores,
         "status": manager.status,
-        "logs": logs
+        "logs": logs,
+        "rotation_seconds": rotation,
+        "current_account": current_acc,
+        "seconds_remaining": seconds_remaining,
+        "progress": progress,
+        "rotate_idx": manager.rotate_idx
     })
 
 @app.route("/api/start", methods=["POST"])
@@ -160,12 +190,12 @@ def api_add():
     data = load_data()
     if any(a["username"] == u for a in data["accounts"]):
         return jsonify({"ok": False, "msg": "الحساب موجود"})
-    new_acc = {"username": u, "password": p, "proxy": (d.get("proxy") or "").strip()}
-    data["accounts"].append(new_acc)
+    data["accounts"].append({"username": u, "password": p, "proxy": ""})
     save_data(data)
+    total = len(data["accounts"])
     if manager.running:
-        manager.add_account_live(new_acc)
-    return jsonify({"ok": True, "msg": f"تم إضافة {u}"})
+        manager.log(f"[SYSTEM] ➕ تم إضافة {u} (سيُدرج في الدورة - الحساب #{total})")
+    return jsonify({"ok": True, "msg": f"تم إضافة {u} (سيُدرج تلقائياً في الدورة)"})
 
 @app.route("/api/delete", methods=["POST"])
 def api_delete():
@@ -178,6 +208,17 @@ def api_delete():
     manager.scores.pop(u, None)
     manager.status.pop(u, None)
     return jsonify({"ok": True, "msg": f"تم حذف {u}"})
+
+@app.route("/api/rotation", methods=["POST"])
+def api_rotation():
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
+    d = request.json or {}
+    secs = int(d.get("seconds", 600))
+    if secs < 30: secs = 30
+    data = load_data()
+    data["rotation_seconds"] = secs
+    save_data(data)
+    return jsonify({"ok": True, "msg": f"مدة الدوران: {secs} ثانية"})
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
