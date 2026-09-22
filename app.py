@@ -288,8 +288,6 @@ def api_register_trading():
     t, c, user_info = B.login(username, password, proxy=proxy if proxy else None)
 
     if t:
-    
-    if t:
         # نجح! الحساب اتنشأ
         m = mgr()
         data = fs.load_accounts(m.phone)
