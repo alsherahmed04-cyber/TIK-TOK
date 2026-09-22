@@ -26,6 +26,7 @@ class UserManager:
         self.scores = {}
         self.status = {}
         self.threads = {}
+        self.tokens = {}  # username -> (token, csrf, proxy)
     def log(self, msg, kind="info"):
         with self.log_lock:
             self.logs.append({"t": datetime.now().strftime("%H:%M:%S"), "m": msg, "k": kind})
@@ -41,6 +42,7 @@ class UserManager:
         if not t:
             self.status[u] = "فشل الدخول"
             self.log(f"[{u}] ❌ فشل", "err"); return
+        self.tokens[u] = (t, c, px)
         B.attest(t, c, proxy=px)
         start_score = user.get("score", 0) or 0
         self.set_score(u, start_score)
@@ -398,9 +400,25 @@ def api_buy():
     acc = next((a for a in m.accs() if a["username"] == acc_name), None)
     if not acc: return jsonify({"ok": False, "msg": "الحساب غير موجود"})
     px = (acc.get("proxy") or "").strip() or None
-    t, c, user = B.login(acc_name, acc["password"], proxy=px)
-    if not t: return jsonify({"ok": False, "msg": "فشل الدخول: " + str(user)[:100]})
-    B.attest(t, c, proxy=px)
+    # نستخدم التوكن الموجود لو الحساب شغال
+    t = c = None
+    user = {"score": 0}
+    if acc_name in m.tokens:
+        t, c, _px = m.tokens[acc_name]
+        # نتأكد إن التوكن لسه صالح
+        sc = B.fetch_score(t, c, proxy=px)
+        if sc is not None:
+            user = {"score": sc}
+        else:
+            t = c = None
+    # لو مفيش توكن صالح، نسجل دخول جديد
+    if not t:
+        t, c, user_info = B.login(acc_name, acc["password"], proxy=px)
+        if not t:
+            return jsonify({"ok": False, "msg": "فشل الدخول: " + str(user_info)[:100]})
+        m.tokens[acc_name] = (t, c, px)
+        user = user_info if isinstance(user_info, dict) else {"score": 0}
+        B.attest(t, c, proxy=px)
     avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
     before = user.get("score", 0) or 0
     ok, result = B.create_order(t, c, service, target, amount, avatar, None, px)
