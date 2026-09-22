@@ -224,6 +224,35 @@ def api_orders(username):
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     return jsonify({"orders": fetch_my_orders(get_phone(), username)})
 
+def refresh_avatars(phone):
+    """يجيب avatar + followerCount للحسابات الناقصة"""
+    try:
+        data = fs.load_accounts(phone)
+        changed = False
+        for acc in data.get("accounts", []):
+            if not acc.get("avatar"):
+                try:
+                    t, c, u = B.login(acc["username"], acc.get("password", ""))
+                    if t:
+                        avatar, followers = B.fetch_user_data(t, c)
+                        if avatar:
+                            acc["avatar"] = avatar
+                            acc["followerCount"] = followers
+                            acc["score"] = u.get("score", 0) if isinstance(u, dict) else 0
+                            changed = True
+                except Exception as e:
+                    pass
+        if changed:
+            fs.save_accounts(phone, data)
+    except Exception as e:
+        pass
+
+@app.route("/api/refresh-avatars", methods=["POST"])
+def api_refresh_avatars():
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
+    refresh_avatars(get_phone())
+    return jsonify({"ok": True, "msg": "تم تحديث الصور"})
+
 @app.route("/api/data")
 def api_data():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
