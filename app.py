@@ -253,6 +253,20 @@ def refresh_avatars(phone):
     except Exception as e:
         pass
 
+
+@app.route("/api/refresh-all-avatars", methods=["POST"])
+def api_refresh_all_avatars():
+    """يحدث صور كل المستخدمين"""
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
+    users = fs.load_users()
+    total = 0
+    for phone in users.keys():
+        try:
+            refresh_avatars(phone)
+            total += 1
+        except: pass
+    return jsonify({"ok": True, "msg": f"تم تحديث {total} مستخدم"})
+
 @app.route("/api/refresh-avatars", methods=["POST"])
 def api_refresh_avatars():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
