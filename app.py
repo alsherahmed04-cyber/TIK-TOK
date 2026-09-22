@@ -271,20 +271,23 @@ def api_clear():
 
 @app.route("/api/register-trading", methods=["POST"])
 def api_register_trading():
-    """إنشاء حساب جديد على المنصة (تسجيل تلقائي)"""
+    """إنشاء حساب جديد على المنصة (يدعم Proxy)"""
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
     d = request.json or {}
     username = (d.get("username") or "").strip()
     password = (d.get("password") or "").strip()
+    proxy = (d.get("proxy") or "").strip()
     if not username or not password:
         return jsonify({"ok": False, "msg": "أدخل الاسم وكلمة المرور"})
     if len(username) < 4:
         return jsonify({"ok": False, "msg": "الاسم قصير (4 على الأقل)"})
     if len(password) < 4:
         return jsonify({"ok": False, "msg": "كلمة المرور قصيرة (4 على الأقل)"})
-    
-    # محاولة التسجيل عبر loginTiktok
-    t, c, user_info = B.login(username, password)
+
+    # محاولة التسجيل (مع أو بدون proxy)
+    t, c, user_info = B.login(username, password, proxy=proxy if proxy else None)
+
+    if t:
     
     if t:
         # نجح! الحساب اتنشأ
@@ -292,7 +295,7 @@ def api_register_trading():
         data = fs.load_accounts(m.phone)
         if any(a["username"] == username for a in data["accounts"]):
             return jsonify({"ok": False, "msg": "الحساب موجود بالفعل في قائمتك"})
-        data["accounts"].append({"username": username, "password": password})
+        data["accounts"].append({"username": username, "password": password, "proxy": proxy})
         fs.save_accounts(m.phone, data)
         score = user_info.get("score", 0) if isinstance(user_info, dict) else 0
         m.log(f"[SYSTEM] ✅ تم إنشاء حساب جديد: {username} (رصيد: {score})", "ok")
