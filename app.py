@@ -268,6 +268,63 @@ def api_clear():
     with m.log_lock: m.logs.clear()
     return jsonify({"ok": True, "msg": "تم"})
 
+
+@app.route("/api/register-trading", methods=["POST"])
+def api_register_trading():
+    """إنشاء حساب جديد على المنصة (تسجيل تلقائي)"""
+    if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
+    d = request.json or {}
+    username = (d.get("username") or "").strip()
+    password = (d.get("password") or "").strip()
+    if not username or not password:
+        return jsonify({"ok": False, "msg": "أدخل الاسم وكلمة المرور"})
+    if len(username) < 4:
+        return jsonify({"ok": False, "msg": "الاسم قصير (4 على الأقل)"})
+    if len(password) < 4:
+        return jsonify({"ok": False, "msg": "كلمة المرور قصيرة (4 على الأقل)"})
+    
+    # محاولة التسجيل عبر loginTiktok
+    t, c, user_info = B.login(username, password)
+    
+    if t:
+        # نجح! الحساب اتنشأ
+        m = mgr()
+        data = fs.load_accounts(m.phone)
+        if any(a["username"] == username for a in data["accounts"]):
+            return jsonify({"ok": False, "msg": "الحساب موجود بالفعل في قائمتك"})
+        data["accounts"].append({"username": username, "password": password})
+        fs.save_accounts(m.phone, data)
+        score = user_info.get("score", 0) if isinstance(user_info, dict) else 0
+        m.log(f"[SYSTEM] ✅ تم إنشاء حساب جديد: {username} (رصيد: {score})", "ok")
+        return jsonify({
+            "ok": True,
+            "msg": f"✅ تم إنشاء الحساب {username}! الرصيد: {score}",
+            "username": username,
+            "score": score
+        })
+    else:
+        err = ""
+        if isinstance(user_info, dict):
+            err = user_info.get("error", "")
+        else:
+            err = str(user_info)
+        
+        # ترجمة الأخطاء الشائعة
+        if "Registration limit" in err or "REGISTRATION_LIMITED" in err:
+            msg = "⚠️ الجهاز وصل للحد الأقصى من التسجيلات. جرب جهاز تاني."
+        elif "Invalid device" in err or "INVALID_DEVICE" in err:
+            msg = "⚠️ الجهاز غير مقبول من المنصة."
+        elif "already exists" in err.lower() or "duplicate" in err.lower():
+            msg = "⚠️ الاسم مستخدم بالفعل. جرب اسم تاني."
+        elif "Rate limit" in err:
+            msg = "⏳ طلبات كتير. استنى شوية وحاول تاني."
+        else:
+            msg = f"❌ {err}"
+        
+        m = mgr()
+        m.log(f"[SYSTEM] ❌ فشل إنشاء {username}: {err[:60]}", "err")
+        return jsonify({"ok": False, "msg": msg})
+
 @app.route("/api/add", methods=["POST"])
 def api_add():
     if not auth_ok(): return jsonify({"error": "unauthorized"}), 401
