@@ -225,27 +225,32 @@ def api_orders(username):
     return jsonify({"orders": fetch_my_orders(get_phone(), username)})
 
 def refresh_avatars(phone):
-    """يجيب avatar + followerCount للحسابات الناقصة"""
+    """يجيب avatar + followerCount لكل الحسابات (دائماً)"""
     try:
         data = fs.load_accounts(phone)
         changed = False
         for acc in data.get("accounts", []):
-            if not acc.get("avatar"):
+            # نحدث لو الصورة ناقصة أو المتابعين 0
+            if not acc.get("avatar") or not acc.get("followerCount"):
                 try:
                     t, c, u = B.login(acc["username"], acc.get("password", ""))
-                    if t:
-                        avatar = u.get("avatar", "") if isinstance(u, dict) else ""
-                        followers = u.get("followerCount", 0) if isinstance(u, dict) else 0
-                        if not avatar:
+                    if t and isinstance(u, dict):
+                        avatar = u.get("avatar", "")
+                        followers = u.get("followerCount", 0) or 0
+                        # لو لسه صفر، نجرب fetch_user_data
+                        if not avatar or followers == 0:
                             try:
-                                avatar, followers = B.fetch_user_data(t, c)
+                                a2, f2 = B.fetch_user_data(t, c)
+                                avatar = avatar or a2
+                                followers = followers or f2
                             except:
                                 pass
                         if avatar:
                             acc["avatar"] = avatar
+                        if followers:
                             acc["followerCount"] = followers
-                            acc["score"] = u.get("score", 0) if isinstance(u, dict) else 0
-                            changed = True
+                        acc["score"] = u.get("score", 0) or 0
+                        changed = True
                 except Exception as e:
                     pass
         if changed:
@@ -253,7 +258,7 @@ def refresh_avatars(phone):
     except Exception as e:
         pass
 
-
+@app.route
 @app.route("/api/refresh-all-avatars", methods=["POST"])
 def api_refresh_all_avatars():
     """يحدث صور كل المستخدمين"""
