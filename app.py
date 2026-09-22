@@ -234,7 +234,13 @@ def refresh_avatars(phone):
                 try:
                     t, c, u = B.login(acc["username"], acc.get("password", ""))
                     if t:
-                        avatar, followers = B.fetch_user_data(t, c)
+                        avatar = u.get("avatar", "") if isinstance(u, dict) else ""
+                        followers = u.get("followerCount", 0) if isinstance(u, dict) else 0
+                        if not avatar:
+                            try:
+                                avatar, followers = B.fetch_user_data(t, c)
+                            except:
+                                pass
                         if avatar:
                             acc["avatar"] = avatar
                             acc["followerCount"] = followers
@@ -388,13 +394,15 @@ def api_add():
                 return jsonify({"ok": False, "msg": "❌ الحساب غير موجود أو كلمة المرور غلط"})
             return jsonify({"ok": False, "msg": f"❌ {err[:120]}"})
 
-        # نجيب بيانات الحساب (avatar + followerCount)
-        avatar = ""
-        follower_count = 0
-        try:
-            avatar, follower_count = B.fetch_user_data(t, c)
-        except:
-            pass
+        # نستخدم بيانات login مباشرة (فيها avatar + followerCount)
+        avatar = user_info.get("avatar", "") if isinstance(user_info, dict) else ""
+        follower_count = user_info.get("followerCount", 0) if isinstance(user_info, dict) else 0
+        # لو مش موجودة، نجرب fetch_user_data
+        if not avatar:
+            try:
+                avatar, follower_count = B.fetch_user_data(t, c)
+            except:
+                pass
 
         # نحفظ الحساب مع البيانات
         new_acc = {
