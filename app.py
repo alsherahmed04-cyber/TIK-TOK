@@ -397,8 +397,9 @@ def api_buy():
     m = mgr()
     acc = next((a for a in m.accs() if a["username"] == acc_name), None)
     if not acc: return jsonify({"ok": False, "msg": "الحساب غير موجود"})
-    t, c, user = B.login(acc_name, acc["password"])
-    if not t: return jsonify({"ok": False, "msg": "فشل الدخول"})
+    px = (acc.get("proxy") or "").strip() or None
+    t, c, user = B.login(acc_name, acc["password"], proxy=px)
+    if not t: return jsonify({"ok": False, "msg": "فشل الدخول: " + str(user)[:100]})
     B.attest(t, c, proxy=px)
     avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
     before = user.get("score", 0) or 0
