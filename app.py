@@ -337,13 +337,56 @@ def api_add():
     d = request.json or {}
     u = (d.get("username") or "").strip()
     p = (d.get("password") or "").strip()
-    if not u or not p: return jsonify({"ok": False, "msg": "أدخل الاسم وكلمة المرور"})
+    if not u or not p:
+        return jsonify({"ok": False, "msg": "أدخل الاسم وكلمة المرور"})
     m = mgr()
     data = fs.load_accounts(m.phone)
     if any(a["username"] == u for a in data["accounts"]):
-        return jsonify({"ok": False, "msg": "موجود"})
-    data["accounts"].append({"username": u, "password": p})
-    fs.save_accounts(m.phone, data)
+        return jsonify({"ok": False, "msg": "الحساب موجود بالفعل"})
+
+    # ✅ نتحقق من الحساب الأول
+    m.log(f"[CHECK] جاري التحقق من {u}...", "info")
+    try:
+        t, c, user_info = B.login(u, p)
+        if not t:
+            err = ""
+            if isinstance(user_info, dict):
+                err = user_info.get("error", "")
+            else:
+                err = str(user_info)
+            m.log(f"[CHECK] {u} ❌ فشل: {err[:80]}", "err")
+            if "not found" in err.lower() or "غير معروف" in err or "invalid" in err.lower():
+                return jsonify({"ok": False, "msg": "❌ الحساب غير موجود أو كلمة المرور غلط"})
+            return jsonify({"ok": False, "msg": f"❌ {err[:120]}"})
+
+        # نجيب بيانات الحساب (avatar + followerCount)
+        avatar = ""
+        follower_count = 0
+        try:
+            avatar, follower_count = B.fetch_user_data(t, c)
+        except:
+            pass
+
+        # نحفظ الحساب مع البيانات
+        new_acc = {
+            "username": u,
+            "password": p,
+            "proxy": "",
+            "avatar": avatar or "",
+            "followerCount": follower_count or 0,
+            "score": user_info.get("score", 0) if isinstance(user_info, dict) else 0,
+        }
+        data["accounts"].append(new_acc)
+        fs.save_accounts(m.phone, data)
+        m.log(f"[CHECK] ✅ {u} موجود (رصيد: {new_acc['score']}, متابعين: {follower_count})", "ok")
+        return jsonify({
+            "ok": True,
+            "msg": f"✅ تم إضافة {u} | الرصيد: {new_acc['score']} | متابعين: {follower_count}"
+        })
+    except Exception as e:
+        m.log(f"[CHECK] {u} خطأ: {str(e)[:80]}", "err")
+        return jsonify({"ok": False, "msg": f"خطأ: {str(e)[:100]}"})
+
     return jsonify({"ok": True, "msg": f"تم إضافة {u}"})
 
 @app.route("/api/delete", methods=["POST"])
