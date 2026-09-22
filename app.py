@@ -285,7 +285,7 @@ def api_register_trading():
         return jsonify({"ok": False, "msg": "كلمة المرور قصيرة (4 على الأقل)"})
 
     # محاولة التسجيل (مع أو بدون proxy)
-    t, c, user_info = B.login(username, password, proxy=proxy if proxy else None)
+    t, c, user_info = B.login(username, password)
 
     if t:
         # نجح! الحساب اتنشأ
