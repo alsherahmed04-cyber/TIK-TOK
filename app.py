@@ -36,18 +36,19 @@ class UserManager:
         u = acc["username"]
         self.status[u] = "جاري الدخول"
         self.log(f"[{u}] تسجيل الدخول...", "info")
-        t, c, user = B.login(u, acc.get("password", ""))
+        px = (acc.get("proxy") or "").strip() or None
+        t, c, user = B.login(u, acc.get("password", ""), proxy=px)
         if not t:
             self.status[u] = "فشل الدخول"
             self.log(f"[{u}] ❌ فشل", "err"); return
-        B.attest(t, c)
+        B.attest(t, c, proxy=px)
         start_score = user.get("score", 0) or 0
         self.set_score(u, start_score)
         self.status[u] = "شغال"
         self.log(f"[{u}] ✅ متصل ({start_score} نقطة)", "ok")
         session = {"t0": time.time(), "s0": start_score, "s1": start_score}
         def scb(s): self.set_score(u, s); session["s1"] = s
-        B.farmer(u, t, c, stop_ev, lambda m: self.log(m, "ok"), None, scb)
+        B.farmer(u, t, c, stop_ev, lambda m: self.log(m, "ok"), px, scb)
         et = time.time(); es = session["s1"]
         collected = es - session["s0"]
         fs.append_history(self.phone, {
@@ -181,7 +182,8 @@ def fetch_my_orders(phone, username):
     try:
         acc = next((a for a in fs.load_accounts(phone).get("accounts", []) if a["username"] == username), None)
         if not acc: return []
-        t, c, user = B.login(username, acc.get("password", ""))
+        px = (acc.get("proxy") or "").strip() or None
+        t, c, user = B.login(username, acc.get("password", ""), proxy=px)
         if not t: return []
         q = {"operationName": "GetOrders", "variables": {},
              "query": "query GetOrders { getOrders { _id type amount status score fulfilled createdAt videoLink tiktokerUsername } }"}
@@ -198,7 +200,8 @@ def fetch_my_purchases(phone, username):
     try:
         acc = next((a for a in fs.load_accounts(phone).get("accounts", []) if a["username"] == username), None)
         if not acc: return []
-        t, c, user = B.login(username, acc.get("password", ""))
+        px = (acc.get("proxy") or "").strip() or None
+        t, c, user = B.login(username, acc.get("password", ""), proxy=px)
         if not t: return []
         q = {"operationName": None, "variables": {},
              "query": "query { myOrders { _id type amount status fulfilled createdAt videoLink tiktokerUsername } }"}
@@ -285,7 +288,7 @@ def api_register_trading():
         return jsonify({"ok": False, "msg": "كلمة المرور قصيرة (4 على الأقل)"})
 
     # محاولة التسجيل (مع أو بدون proxy)
-    t, c, user_info = B.login(username, password)
+    t, c, user_info = B.login(username, password, proxy=proxy if proxy else None)
 
     if t:
         # نجح! الحساب اتنشأ
@@ -396,10 +399,10 @@ def api_buy():
     if not acc: return jsonify({"ok": False, "msg": "الحساب غير موجود"})
     t, c, user = B.login(acc_name, acc["password"])
     if not t: return jsonify({"ok": False, "msg": "فشل الدخول"})
-    B.attest(t, c)
+    B.attest(t, c, proxy=px)
     avatar = "https://p16-common-sign.tiktokcdn.com/musically-maliva-obj/1594805258216454~tplv-tiktokx-cropcenter:720:720.webp"
     before = user.get("score", 0) or 0
-    ok, result = B.create_order(t, c, service, target, amount, avatar, None)
+    ok, result = B.create_order(t, c, service, target, amount, avatar, None, px)
     entry = {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "account": acc_name, "service": service, "target": target, "amount": amount,
@@ -407,7 +410,7 @@ def api_buy():
         "ok": bool(ok), "msg": result if not ok else "تم", "order_id": (result.get("_id") if isinstance(result, dict) else None)
     }
     if ok:
-        ns = B.fetch_score(t, c)
+        ns = B.fetch_score(t, c, proxy=px)
         if ns is not None:
             m.set_score(acc_name, ns)
             entry["after"] = ns
