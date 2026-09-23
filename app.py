@@ -38,10 +38,16 @@ class UserManager:
         self.status[u] = "جاري الدخول"
         self.log(f"[{u}] تسجيل الدخول...", "info")
         px = (acc.get("proxy") or "").strip() or None
+        self.log(f"[{u}] محاولة دخول... (proxy: {px or 'none'})", "info")
         t, c, user = B.login(u, acc.get("password", ""), proxy=px)
         if not t:
             self.status[u] = "فشل الدخول"
-            self.log(f"[{u}] ❌ فشل", "err"); return
+            err_msg = ""
+            if isinstance(user, dict):
+                err_msg = user.get("error", str(user))
+            else:
+                err_msg = str(user)
+            self.log(f"[{u}] ❌ فشل: {err_msg[:200]}", "err"); return
         self.tokens[u] = (t, c, px)
         B.attest(t, c, proxy=px)
         start_score = user.get("score", 0) or 0
